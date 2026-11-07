@@ -1,0 +1,97 @@
+package require tcltest 2
+namespace import ::tcltest::*
+package require web-static-wiki 0.1.0
+namespace eval fixture {}
+proc fixture::write {path text} {
+    set ch [open $path w]; fconfigure $ch -encoding utf-8
+    try {puts -nonewline $ch $text} finally {close $ch}
+}
+proc fixture::setup {} {
+    variable root [makeDirectory content]
+    file mkdir [file join $root Folder]
+    write [file join $root guide.md] "# Guide\n\nHello **world**.\n\n<script>alert(1)</script>\n"
+    write [file join $root .hidden.md] "# Hidden"
+    variable store [::web::static::wiki::create -directory $root -title {A & B}]
+    variable router [::tpathexp::router]
+    ::web::static::wiki::mount $router -store $store -prefix /content
+}
+proc fixture::cleanup {} {
+    variable router; $router destroy
+    removeDirectory content
+}
+proc fixture::get {path {method GET}} {
+    variable router
+    $router dispatch [dict create method $method path $path]
+}
+test content-1 {directory, metadata and safe Markdown} -setup fixture::setup -body {
+    set index [fixture::get /content]
+    set page [fixture::get /content/guide]
+    set body [dict get $page body]
+    list [dict get $index statusCode] [string match {*A &amp; B*} [dict get $index body]] \
+        [dict get $page statusCode] [string match {*<strong>world</strong>*} $body] \
+        [string match {*<script>alert*} $body] [regexp -all {<h1>} $body]
+} -cleanup fixture::cleanup -result {200 1 200 1 0 1}
+test content-2 {directory snapshot is independent of changes} -setup fixture::setup -body {
+    file delete [file join $fixture::root guide.md]
+    set fresh [::web::static::wiki::create -directory $fixture::root]
+    list [dict get [::web::static::wiki::load $fixture::store /guide] title] \
+        [catch {::web::static::wiki::load $fresh /guide}] [llength [::web::static::wiki::children $fresh /]]
+} -cleanup fixture::cleanup -result {Guide 1 1}
+test content-3 {no mutation API or editable configuration} -setup fixture::setup -body {
+    set result {}
+    foreach name {add save edit new initdb sync history} {lappend result [llength [info commands ::web::static::wiki::$name]]}
+    lappend result [catch {::web::static::wiki::mount $fixture::router -store $fixture::store -authorize bogus}]
+    set result
+} -cleanup fixture::cleanup -result {0 0 0 0 0 0 0 1}
+test content-4 {GET/HEAD only with no authoring routes or assets} -setup fixture::setup -body {
+    set codes {}
+    foreach path {/content/_edit/guide /content/_new /content/_assets/editor.css /content/missing /content/.hidden} {
+        lappend codes [dict get [fixture::get $path] statusCode]
+    }
+    lappend codes [dict get [fixture::get /content POST] statusCode]
+    lappend codes [dict get [fixture::get /content/_new POST] statusCode]
+    lappend codes [dict get [fixture::get /content/guide HEAD] body]
+    set codes
+} -cleanup fixture::cleanup -result {404 404 404 404 400 405 405 {}}
+test content-5 {malformed paths and traversal cannot access files} -setup fixture::setup -body {
+    set codes {}
+    foreach path {/content/.. /content/%2e%2e /content/a%2fb /content/%FF /content/%00 /content/%GG} {
+        lappend codes [dict get [fixture::get $path] statusCode]
+    }
+    set codes
+} -cleanup fixture::cleanup -result {400 400 400 400 400 400}
+test content-6 {source symlinks are rejected} -setup fixture::setup -body {
+    file link -symbolic [file join $fixture::root link.md] [file join $fixture::root guide.md]
+    catch {::web::static::wiki::create -directory $fixture::root} message options
+    dict get $options -errorcode
+} -cleanup fixture::cleanup -result {WEB STATIC_WIKI 400}
+test content-7 {duplicate slugs abort loading} -setup fixture::setup -body {
+    fixture::write [file join $fixture::root duplicate.md] "# Guide"
+    catch {::web::static::wiki::create -directory $fixture::root} message options
+    dict get $options -errorcode
+} -cleanup fixture::cleanup -result {WEB STATIC_WIKI 409}
+test content-8 {missing source and oversized files fail clearly} -setup fixture::setup -body {
+    set missing [catch {::web::static::wiki::create -directory [file join $fixture::root missing]}]
+    fixture::write [file join $fixture::root guide.md] [string repeat x 1048577]
+    catch {::web::static::wiki::create -directory $fixture::root} message options
+    list $missing [dict get $options -errorcode]
+} -cleanup fixture::cleanup -result {1 {WEB STATIC_WIKI 413}}
+test content-9 {CSS allowlist and response headers} -setup fixture::setup -body {
+    set result [fixture::get /content/_assets/style.css]
+    list [dict get $result statusCode] [dict get $result headers content-type] \
+        [dict get $result headers x-content-type-options] \
+        [dict exists $result headers content-security-policy]
+} -cleanup fixture::cleanup -result {200 {text/css; charset=utf-8} nosniff 1}
+test content-10 {custom layout and multiple independent mounts} -setup fixture::setup -body {
+    set router [::tpathexp::router]
+    try {
+        ::web::static::wiki::mount $router -store $fixture::store -prefix /a -config \
+            {master_template {<header>{{ brand }}</header>{% block body %}{% endblock %}}}
+        ::web::static::wiki::mount $router -store $fixture::store -prefix /b
+        set a [$router dispatch {method GET path /a/guide}]
+        set b [$router dispatch {method GET path /b/guide}]
+        list [string match {<header>A &amp; B*</article>*} [dict get $a body]] [dict get $b statusCode]
+    } finally {$router destroy}
+} -cleanup fixture::cleanup -result {1 200}
+
+cleanupTests

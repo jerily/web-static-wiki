@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="{{ assets }}/style.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="{{ home }}">{{ brand }}</a>
+    <nav aria-label="Site">
+      {% for link in navigation %}<a href="{{ link.href }}">{{ link.label }}</a>{% endfor %}
+    </nav>
+  </header>
+  <main>{% block body %}{% endblock %}</main>
+  <footer>Published with Jerily</footer>
+</body>
+</html>
