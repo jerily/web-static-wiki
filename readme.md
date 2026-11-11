@@ -1,17 +1,17 @@
 # web-static-wiki — User & Technical Requirements
 
 ## Rules
-- Serve Markdown from a trusted directory using a read-only snapshot per worker.
+- Serve a trusted local directory, or query synchronized SQL content on demand.
 - Keep content as data; never evaluate it as Tcl or template code.
 - Render safe GFM HTML through `cmark_gfm` and escaped metadata through Jinja.
 
 ## Commandments
-- No database, write API, editing endpoints, browser editor or authentication flags.
-- The host owns its router and chooses when to recreate the content snapshot.
+- No request editing API, editing endpoints, browser editor or authentication flags.
+- The host owns its router, database connections and explicit content imports.
 
 ## Principles
 - `::web::static::wiki` owns directory reading, routing, templates and CSS.
-- Content changes become visible when the host recreates and remounts its store, usually on restart.
+- Directory stores refresh when recreated; database stores read synced changes on the next request.
 
 ## Best Practices
 - Mount before host catch-all routes and use a separate router per worker.
@@ -38,7 +38,8 @@ $router destroy
 
 Public commands: `create -directory directory ?-title title? ?-exclude_from_navigation paths? ?-images-directory directory? ?-s3 settings?`, `load store /path`,
 `children store /folder`, and `mount router -store store ?options...?`.
-The store is an immutable Tcl dictionary containing the validated directory snapshot.
+A directory store contains validated local content. A database store holds a borrowed
+connection and queries requested items without preloading content.
 A missing directory is an error; an empty directory serves an empty index.
 
 `.md` and `.markdown` files are read recursively; dotfiles are ignored, and symlinks
@@ -159,7 +160,7 @@ bucket ACL is needed. For local tests only, `http_endpoint` may name a loopback
 HTTP origin (e.g. `http://127.0.0.1:9000`); it must match the SDK client endpoint.
 The package then allows that origin in its image CSP. Production URLs require HTTPS.
 
-Image support requires `aws-sdk-tcl-s3` 1.0.17+ (`awss3`) and Tcllib's `sha256`.
+Image support requires `aws-sdk-tcl-s3` 1.0.17+ (`awss3`) and `twebserver`'s native `::twebserver::sha256`.
 
 The unit suite uses a fake S3 client. For real SDK requests against a disposable
 loopback HTTP fixture (no AWS credentials or account needed), run:
@@ -168,3 +169,27 @@ loopback HTTP fixture (no AWS credentials or account needed), run:
 python3 tests/images_server.py --tclsh tclsh9.1 \
   --library /path/to/aws-sdk-tcl-s3/libaws-sdk-tcl-s3.so
 ```
+
+## Explicit database initialization and synchronization
+
+The host owns the `tpersist` connection (SQLite locally or PostgreSQL in production).
+Schema and content updates are explicit maintenance operations:
+
+```tcl
+::web::static::wiki::initdb $connection
+set store [::web::static::wiki::create -connection $connection -domain example.com \
+    -images-directory ./images -s3 [dict create client $s3 bucket private-images prefix content/images]]
+::web::static::wiki::sync $store ./content
+```
+
+`create -connection` performs no queries, schema creation, file reads or hashing.
+`load $store /path` queries just that item through `tpersist`; folder/post listings
+query metadata without article bodies. Existing readers see synced changes on their
+next query. The host closes the connection when its worker stops.
+
+`sync` validates source files, prepares rendered Markdown and image keys, uploads
+missing images, and replaces the domain's rows in one transaction. Image-upload
+failures leave the previous database content intact. Expiring image URLs are signed
+when rendering a requested item. `initdb` is idempotent and never called by `sync`,
+store creation, mounting or request handling. Directory stores keep their original
+local behavior. There are no snapshot files to build, publish or load.
