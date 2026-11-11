@@ -1,0 +1,123 @@
+package require tcltest 2
+namespace import ::tcltest::*
+package require web-static-wiki
+package provide awss3 1.0.17
+namespace eval sync_fixture {}
+namespace eval ::aws::s3 {}
+proc ::aws::s3::generate_presigned_url {args} {
+    return "https://images.example/[lindex $args end]?X-Amz-Signature=[string repeat a 64]"
+}
+proc sync_fixture::write {path data} {
+    file mkdir [file dirname $path]
+    set channel [open $path wb]
+    try {puts -nonewline $channel $data} finally {close $channel}
+}
+proc sync_fixture::client {method bucket key args} {
+    variable objects
+    variable calls
+    variable failure
+    lappend calls [list $method $key]
+    if {$method eq $failure} {error "S3 failed"}
+    switch -- $method {
+        ls {return [dict keys $objects $key]}
+        put {
+            set channel [open [lindex $args 0] rb]
+            try {dict set objects $key [read $channel]} finally {close $channel}
+        }
+        default {error "Unexpected S3 operation"}
+    }
+}
+proc sync_fixture::setup {} {
+    variable root [makeDirectory sync-fixture]
+    variable objects {}; variable calls {}; variable failure {}
+    variable s3 {client ::sync_fixture::client bucket private-images prefix test/images upload_missing false}
+    write [file join $root pages guide.md] [encoding convertto utf-8 "# Guide\n\n!\[Image\](pixel.png)\n\nA café and **bold** text."]
+    write [file join $root images pixel.png] [binary format H* 89504e470d0a00ff]
+    variable schema {}
+    if {[info exists ::env(TTREK_TEST_POSTGRES)]} {
+        set options {-dialect postgresql -autobegin 0}
+        dict for {key value} $::env(TTREK_TEST_POSTGRES) {lappend options -$key $value}
+        variable db [::tpersist::db_connect {*}$options]
+        set schema static_wiki_[pid]_[clock clicks]
+        ::tpersist::_raw $db "CREATE SCHEMA $schema"
+        ::tpersist::_raw $db "SET search_path TO $schema"
+    } else {variable db [::tpersist::db_connect -database :memory: -autobegin 0]}
+    variable store [::web::static::wiki::create -connection $db -domain test \
+        -images-directory [file join $root images] -s3 $s3]
+}
+proc sync_fixture::cleanup {} {
+    if {$::sync_fixture::schema ne {}} {::tpersist::_raw $::sync_fixture::db "DROP SCHEMA $::sync_fixture::schema CASCADE"}
+    ::tpersist::db_disconnect $::sync_fixture::db
+    removeDirectory sync-fixture
+}
+
+test sync-initdb {store creation does not create schema or read any content} -setup sync_fixture::setup -body {
+    if {$sync_fixture::schema ne {}} {
+        set before [::tpersist::_raw $sync_fixture::db {SELECT tablename FROM pg_tables WHERE schemaname = current_schema()}]
+    } else {set before [::tpersist::_raw $sync_fixture::db {SELECT name FROM sqlite_master WHERE type = 'table'}]}
+    ::web::static::wiki::initdb $sync_fixture::db
+    ::web::static::wiki::initdb $sync_fixture::db
+    list $before [dict exists $sync_fixture::store items] $sync_fixture::calls
+} -cleanup sync_fixture::cleanup -result {{} 0 {}}
+
+test sync-runtime {each load queries one item; no source, image hashing or Markdown compilation is needed} -setup sync_fixture::setup -body {
+    ::web::static::wiki::initdb $sync_fixture::db
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    file delete -force [file join $sync_fixture::root pages] [file join $sync_fixture::root images]
+    set sync_fixture::calls {}
+    rename ::twebserver::sha256 ::twebserver::saved_sha256
+    proc ::twebserver::sha256 {args} {error "Runtime hashing forbidden"}
+    rename ::cmark_gfm::render_gfm_html ::cmark_gfm::saved_render
+    proc ::cmark_gfm::render_gfm_html {args} {error "Runtime Markdown rendering forbidden"}
+    set ::sql_rows {}
+    proc ::sync_fixture::trace_sql {command code result op} {
+        if {$code == 0} {lappend ::sql_rows [llength [dict get $result rows]]}
+    }
+    trace add execution ::web::static::wiki::db_execute leave ::sync_fixture::trace_sql
+    try {
+        set store [::web::static::wiki::create -connection $sync_fixture::db -domain test -s3 $sync_fixture::s3]
+        set atStartup $::sql_rows
+        set item [::web::static::wiki::load $store /guide]
+        set html [::web::static::wiki::render_markdown $store $item]
+        list $atStartup $::sql_rows [string match {*https://images.example/test/images/*} $html] \
+            [string match {*<strong>bold</strong>*} $html] $sync_fixture::calls
+    } finally {
+        rename ::twebserver::sha256 {}; rename ::twebserver::saved_sha256 ::twebserver::sha256
+        rename ::cmark_gfm::render_gfm_html {}; rename ::cmark_gfm::saved_render ::cmark_gfm::render_gfm_html
+        trace remove execution ::web::static::wiki::db_execute leave ::sync_fixture::trace_sql
+    }
+} -cleanup sync_fixture::cleanup -result {{} 1 1 1 {}}
+
+test sync-update {existing readers see new content on their next query; domains stay isolated} -setup sync_fixture::setup -body {
+    ::web::static::wiki::initdb $sync_fixture::db
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    set other [dict replace $sync_fixture::store -domain other]
+    ::web::static::wiki::sync $other [file join $sync_fixture::root pages]
+    sync_fixture::write [file join $sync_fixture::root pages guide.md] {# Updated
+New text.}
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    set item [::web::static::wiki::load $sync_fixture::store /updated]
+    set listing [::web::static::wiki::children $sync_fixture::store /]
+    list [dict get $item title] [dict get [::web::static::wiki::load $other /guide] title] \
+        [catch {::web::static::wiki::load $sync_fixture::store /guide}] \
+        [dict exists [lindex $listing 0] markdown]
+} -cleanup sync_fixture::cleanup -result {Updated Guide 1 0}
+
+test sync-failure {failed image uploads leave the existing database content unchanged} -setup sync_fixture::setup -body {
+    ::web::static::wiki::initdb $sync_fixture::db
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    sync_fixture::write [file join $sync_fixture::root images pixel.png] changed
+    set sync_fixture::failure put
+    list [catch {::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]}] \
+        [dict get [::web::static::wiki::load $sync_fixture::store /guide] title]
+} -cleanup sync_fixture::cleanup -result {1 Guide}
+
+test sync-storage {stored references cannot silently switch image buckets} -setup sync_fixture::setup -body {
+    ::web::static::wiki::initdb $sync_fixture::db
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    set store [::web::static::wiki::create -connection $sync_fixture::db -domain test \
+        -s3 [dict replace $sync_fixture::s3 bucket different]]
+    ::web::static::wiki::load $store /guide
+} -cleanup sync_fixture::cleanup -returnCodes error -result {Stored image bucket differs from runtime configuration}
+
+cleanupTests

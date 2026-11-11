@@ -37,12 +37,12 @@ test content-2 {directory snapshot is independent of changes} -setup fixture::se
     list [dict get [::web::static::wiki::load $fixture::store /guide] title] \
         [catch {::web::static::wiki::load $fresh /guide}] [llength [::web::static::wiki::children $fresh /]]
 } -cleanup fixture::cleanup -result {Guide 1 1}
-test content-3 {no mutation API or editable configuration} -setup fixture::setup -body {
+test content-3 {no request editing API or editable configuration} -setup fixture::setup -body {
     set result {}
-    foreach name {add save edit new initdb sync history} {lappend result [llength [info commands ::web::static::wiki::$name]]}
+    foreach name {add save edit new history} {lappend result [llength [info commands ::web::static::wiki::$name]]}
     lappend result [catch {::web::static::wiki::mount $fixture::router -store $fixture::store -authorize bogus}]
     set result
-} -cleanup fixture::cleanup -result {0 0 0 0 0 0 0 1}
+} -cleanup fixture::cleanup -result {0 0 0 0 0 1}
 test content-4 {GET/HEAD only with no authoring routes or assets} -setup fixture::setup -body {
     set codes {}
     foreach path {/content/_edit/guide /content/_new /content/_assets/editor.css /content/missing /content/.hidden} {

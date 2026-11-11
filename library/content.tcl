@@ -11,9 +11,10 @@ proc ::web::static::wiki::options {defaults args} {
     return $defaults
 }
 
-# Snapshot the trusted directory once per worker. Recreate the store to publish changes.
+# Directory stores retain the local behavior. Database stores query on demand.
 proc ::web::static::wiki::create {args} {
-    set store [options {-directory {} -title Wiki -exclude_from_navigation {} -images-directory {} -s3 {}} {*}$args]
+    set store [options {-connection {} -domain default -directory {} -title Wiki -exclude_from_navigation {} -images-directory {} -s3 {}} {*}$args]
+    if {[dict get $store -connection] ne {}} {return [database_store $store]}
     set directory [dict get $store -directory]
     if {$directory eq {} || ![file isdirectory $directory] || [file type $directory] eq "link"} {
         fail 400 "-directory must be an existing content directory"
@@ -49,6 +50,7 @@ proc ::web::static::wiki::canonical_path {path} {
 
 proc ::web::static::wiki::load {store path} {
     canonical_path $path
+    if {[dict get $store -connection] ne {}} {return [database_load $store $path]}
     if {![dict exists $store items $path]} {fail 404 "content not found"}
     return [dict get $store items $path]
 }
@@ -64,7 +66,11 @@ proc ::web::static::wiki::compare_items {left right} {
 proc ::web::static::wiki::children {store path} {
     canonical_path $path
     set rows {}
-    dict for {key item} [dict get $store items] {
+    if {[dict get $store -connection] ne {}} {
+        set candidates [database_listing $store parent_path $path]
+    } else {set candidates [dict values [dict get $store items]]}
+    foreach item $candidates {
+        set key [dict get $item path]
         if {$key eq $path || [dict get $item parent_path] ne $path} {continue}
         set source [dict get $item source_path]
         set hidden 0
