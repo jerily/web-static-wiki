@@ -131,11 +131,19 @@ Keep the trusted content and image directories unchanged while creating a store.
 
 PNG, JPEG, GIF, WebP, AVIF, SVG, ICO and BMP files are indexed recursively (dotfiles
 are ignored). The limit is 20 MiB per image. All indexed images, including unused
-ones, are uploaded during `create` if absent from S3. Keys contain the SHA-256 of
+ones, are uploaded during `create` if absent from S3 and `upload_missing` is true
+(the default). Keys contain the SHA-256 of
 the bytes and a normalized extension, under the configured prefix. Identical files
 share an object; changing bytes creates a new object without breaking old snapshots.
 Existing objects are left untouched and old objects are not deleted automatically.
 Uploads set the matching image MIME type. Listing/upload errors abort creation.
+
+For production, call `create` with `upload_missing true` during the build, then
+use `upload_missing false` in the runtime's `-s3` dictionary. Runtime creation
+still validates sources and computes the same keys, but makes no S3 LIST or PUT
+calls. Bundle the same image files and use the same bucket/prefix in both stages;
+missing S3 objects will not be repaired at runtime. A failed build upload must
+prevent deployment. Local development can keep the default automatic uploads.
 
 Each rendered response gets freshly signed GET URLs; no expiring URLs are stored
 in Markdown or in the snapshot. HTML attributes escape the signed URL correctly.
@@ -144,8 +152,9 @@ need reloading after expiry, and temporary credentials may expire sooner. Page
 responses retain `Cache-Control: no-store`.
 
 The S3 settings are `client`, `bucket`, `prefix` (default `content/images`) and
-`url_expiry_seconds`. The client needs `s3:ListBucket` for the object prefix,
-`s3:PutObject` for missing images, and `s3:GetObject` for signed downloads. No public
+`url_expiry_seconds`, plus the boolean `upload_missing` (default true). Uploads
+need `s3:ListBucket` for the object prefix and `s3:PutObject` for missing images.
+A runtime using `upload_missing false` only needs `s3:GetObject` for signed downloads. No public
 bucket ACL is needed. For local tests only, `http_endpoint` may name a loopback
 HTTP origin (e.g. `http://127.0.0.1:9000`); it must match the SDK client endpoint.
 The package then allows that origin in its image CSP. Production URLs require HTTPS.
