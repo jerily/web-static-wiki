@@ -3,6 +3,8 @@
 `::web::static::wiki::mount router -store store ?-prefix /wiki? ?-navigation links? ?-config settings?`
 
 The host supplies a `tpathexp` router and a store from `create -directory`.
+Pass `-exclude_from_navigation {images}` to `create` to hide source paths from
+directory listings. Direct content URLs and image rendering remain available.
 Mount before catch-all routes. A prefix must be an absolute canonical content path;
 `/` mounts at the root. Navigation entries are `{label /local-path}` pairs.
 

@@ -13,10 +13,21 @@ proc ::web::static::wiki::options {defaults args} {
 
 # Snapshot the trusted directory once per worker. Recreate the store to publish changes.
 proc ::web::static::wiki::create {args} {
-    set store [options {-directory {} -title Wiki -images-directory {} -s3 {}} {*}$args]
+    set store [options {-directory {} -title Wiki -exclude_from_navigation {} -images-directory {} -s3 {}} {*}$args]
     set directory [dict get $store -directory]
     if {$directory eq {} || ![file isdirectory $directory] || [file type $directory] eq "link"} {
         fail 400 "-directory must be an existing content directory"
+    }
+    foreach source [dict get $store -exclude_from_navigation] {
+        if {$source eq {} || [file pathtype $source] ne "relative" ||
+                [regexp {[:\\\x00-\x1f\x7f]} $source]} {
+            fail 400 "-exclude_from_navigation entries must be relative source paths"
+        }
+        foreach segment [split $source /] {
+            if {$segment in {{} . ..}} {
+                fail 400 "-exclude_from_navigation entries must not contain empty or dot path segments"
+            }
+        }
     }
     dict set store -directory [file normalize $directory]
     dict set store kind wiki
@@ -54,7 +65,16 @@ proc ::web::static::wiki::children {store path} {
     canonical_path $path
     set rows {}
     dict for {key item} [dict get $store items] {
-        if {$key ne $path && [dict get $item parent_path] eq $path} {lappend rows $item}
+        if {$key eq $path || [dict get $item parent_path] ne $path} {continue}
+        set source [dict get $item source_path]
+        set hidden 0
+        foreach excluded [dict get $store -exclude_from_navigation] {
+            if {$source eq $excluded || [string first "$excluded/" $source] == 0} {
+                set hidden 1
+                break
+            }
+        }
+        if {!$hidden} {lappend rows $item}
     }
     return [lsort -command ::web::static::wiki::compare_items $rows]
 }

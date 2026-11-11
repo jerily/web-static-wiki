@@ -1,6 +1,6 @@
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki 0.1.1
+package require web-static-wiki 0.1.2
 package require sha256
 # The unit suite uses a deterministic client; the HTTP integration suite uses awss3.
 package provide awss3 1.0.17
@@ -83,6 +83,17 @@ test images-upload {only distinct images are uploaded with binary bytes and MIME
         [string match {*title="title"*} $html] [expr {[string first {<code>![code](missing.png)</code>} $html] >= 0}] \
         [llength [::web::static::wiki::children $store /]]
 } -cleanup image_fixture::cleanup -result {2 {image/png image/svg+xml} 1 3 1 1 1 1 1}
+
+test images-navigation {images in a hidden content folder are still uploaded and rendered} -setup image_fixture::setup -body {
+    set content [file join $image_fixture::directory pages]
+    file mkdir [file join $content assets]
+    image_fixture::write [file join $content assets screenshot.png] $image_fixture::bytes
+    image_fixture::write $image_fixture::source "# Images\n\n!\[Screenshot\](assets/screenshot.png)"
+    set store [image_fixture::create -images-directory $content -exclude_from_navigation {assets}]
+    list [dict size $image_fixture::objects] \
+        [lmap item [::web::static::wiki::children $store /] {dict get $item path}] \
+        [string match {*<img src="https://bucket.example/test/images/*} [image_fixture::render $store]]
+} -cleanup image_fixture::cleanup -result {1 /images 1}
 
 test images-repeat {recreating a snapshot skips existing objects; changed bytes get a new key} -setup image_fixture::setup -body {
     image_fixture::create
