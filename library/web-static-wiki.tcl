@@ -12,4 +12,4 @@ source [file join $::web::static::wiki::root library images.tcl]
 source [file join $::web::static::wiki::root library templates.tcl]
 source [file join $::web::static::wiki::root library http.tcl]
 source [file join $::web::static::wiki::root library mount.tcl]
-package provide web-static-wiki 0.1.2
+package provide web-static-wiki 0.1.3

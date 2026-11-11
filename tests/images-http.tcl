@@ -2,7 +2,7 @@ lassign $argv library endpoint directory
 set root [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $root
 load $library Aws_sdk_tcl_s3
-package require web-static-wiki 0.1.2
+package require web-static-wiki 0.1.3
 package require http
 proc assert {expression} {if {![uplevel 1 [list expr $expression]]} {error "assertion failed: $expression"}}
 proc write {filename bytes} {
@@ -27,6 +27,11 @@ set options [list -directory [file join $directory pages] -images-directory [fil
 try {
     set store [::web::static::wiki::create {*}$options]
     ::web::static::wiki::create {*}$options
+    # Runtime mode must make no LIST or PUT calls (the server counts both).
+    set runtime [::web::static::wiki::create {*}$options -s3 \
+        [dict replace [dict get $options -s3] upload_missing false]]
+    assert {[dict get $runtime items] eq [dict get $store items]}
+    set store $runtime
     set html [::web::static::wiki::render_markdown $store [::web::static::wiki::load $store /images]]
     set index 0
     foreach {tag escaped} [regexp -all -inline {<img src="([^"]+)"} $html] {

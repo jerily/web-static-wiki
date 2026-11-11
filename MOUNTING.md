@@ -24,3 +24,8 @@ Image storage is configured on `create` with `-images-directory` and `-s3`.
 Image sources are relative to that directory, with no `..`, absolute/external URLs
 or symlinks. `markdown_html` contains freshly signed image URLs per request; host
 layouts must retain its safe rendering. See [readme.md](readme.md#images-in-private-s3-storage).
+
+For build-time uploads, use `upload_missing true` in `-s3` during the build and
+`upload_missing false` at runtime. Both stages must use the same image files,
+bucket and prefix. Runtime mode validates references and signs fresh URLs without
+listing or uploading S3 objects; its role only needs image `s3:GetObject` access.
