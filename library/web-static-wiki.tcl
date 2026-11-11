@@ -8,7 +8,8 @@ namespace eval ::web::static::wiki {
     variable root [file dirname [file dirname [info script]]]
 }
 source [file join $::web::static::wiki::root library content.tcl]
+source [file join $::web::static::wiki::root library images.tcl]
 source [file join $::web::static::wiki::root library templates.tcl]
 source [file join $::web::static::wiki::root library http.tcl]
 source [file join $::web::static::wiki::root library mount.tcl]
-package provide web-static-wiki 0.1.0
+package provide web-static-wiki 0.1.1

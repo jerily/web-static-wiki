@@ -28,7 +28,7 @@ ttrek install web-static-wiki
 ```
 
 ```tcl
-package require web-static-wiki 0.1.0
+package require web-static-wiki 0.1.1
 set store [::web::static::wiki::create -directory ./content/wiki -title Wiki]
 set router [::tpathexp::router]
 ::web::static::wiki::mount $router -store $store -prefix /wiki
@@ -36,7 +36,7 @@ puts [dict get [$router dispatch {method GET path /wiki}] body]
 $router destroy
 ```
 
-Public commands: `create -directory directory ?-title title?`, `load store /path`,
+Public commands: `create -directory directory ?-title title? ?-images-directory directory? ?-s3 settings?`, `load store /path`,
 `children store /folder`, and `mount router -store store ?options...?`.
 The store is an immutable Tcl dictionary containing the validated directory snapshot.
 A missing directory is an error; an empty directory serves an empty index.
@@ -69,3 +69,75 @@ Metadata is escaped, Markdown uses safe HTML mode, and responses include CSP and
 ### Pending
 The host owns TLS, request limits and deployment permissions. Source directories
 must not be modified by untrusted users while snapshots are being read.
+
+## Images in private S3 storage
+
+Image hosting is optional. Pass `-s3` and, optionally, `-images-directory` to
+`create`. Without `-s3`, the existing Markdown rendering behavior is unchanged.
+
+```tcl
+package require awss3 1.0.17
+set s3 [::aws::s3::create {region eu-central-1}]
+set store [::web::static::wiki::create -directory ./content/wiki \
+    -images-directory ./content/images \
+    -s3 [dict create client $s3 bucket my-private-images \
+        prefix site/images url_expiry_seconds 3600]]
+```
+
+The host owns the client and must keep it alive while the store is mounted.
+Use the SDK's credential provider chain (for example an IAM role); the store
+contains a client handle, not credentials. Each worker needs its own client.
+
+All image sources are relative to `-images-directory`, which defaults to the
+content directory. They are **not relative to the Markdown file**. For example:
+
+```markdown
+![Architecture](architecture.svg)
+![Installation screen](screens/install.png "Installation")
+![Reference image][screen]
+
+[screen]: screens/install.png
+```
+
+These refer to `content/images/architecture.svg` and
+`content/images/screens/install.png` in the example above. Spaces and Unicode
+filenames work with angle-bracket destinations or percent encoding. SVG fragments
+such as `architecture.svg#overview` are preserved. Ordinary hyperlinks and image
+syntax inside code are unchanged; raw HTML remains disabled by the safe renderer.
+
+When S3 image hosting is enabled, every rendered image must name an indexed image.
+External URLs, absolute paths, query strings, backslashes, empty/hidden/dot path
+segments (including `..` and percent-encoded traversal), encoded separators, and
+symlinks are rejected. A missing image aborts the snapshot before uploads begin.
+Keep the trusted content and image directories unchanged while creating a store.
+
+PNG, JPEG, GIF, WebP, AVIF, SVG, ICO and BMP files are indexed recursively (dotfiles
+are ignored). The limit is 20 MiB per image. All indexed images, including unused
+ones, are uploaded during `create` if absent from S3. Keys contain the SHA-256 of
+the bytes and a normalized extension, under the configured prefix. Identical files
+share an object; changing bytes creates a new object without breaking old snapshots.
+Existing objects are left untouched and old objects are not deleted automatically.
+Uploads set the matching image MIME type. Listing/upload errors abort creation.
+
+Each rendered response gets freshly signed GET URLs; no expiring URLs are stored
+in Markdown or in the snapshot. HTML attributes escape the signed URL correctly.
+`url_expiry_seconds` defaults to 3600 and must be 1–604800. Already-open pages may
+need reloading after expiry, and temporary credentials may expire sooner. Page
+responses retain `Cache-Control: no-store`.
+
+The S3 settings are `client`, `bucket`, `prefix` (default `content/images`) and
+`url_expiry_seconds`. The client needs `s3:ListBucket` for the object prefix,
+`s3:PutObject` for missing images, and `s3:GetObject` for signed downloads. No public
+bucket ACL is needed. For local tests only, `http_endpoint` may name a loopback
+HTTP origin (e.g. `http://127.0.0.1:9000`); it must match the SDK client endpoint.
+The package then allows that origin in its image CSP. Production URLs require HTTPS.
+
+Image support requires `aws-sdk-tcl-s3` 1.0.17+ (`awss3`) and Tcllib's `sha256`.
+
+The unit suite uses a fake S3 client. For real SDK requests against a disposable
+loopback HTTP fixture (no AWS credentials or account needed), run:
+
+```sh
+python3 tests/images_server.py --tclsh tclsh9.1 \
+  --library /path/to/aws-sdk-tcl-s3/libaws-sdk-tcl-s3.so
+```

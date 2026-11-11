@@ -1,13 +1,15 @@
 {
   "name": "web-static-wiki",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "scripts": {},
   "dependencies": {
     "tcl": ">=8.6.0,<10.0.0",
     "tpathexp": "^1.1.0",
     "cmark-gfm-tcl": "^0.1.0",
     "jinja2-tcl": "^0.1.0",
-    "tjson": "^1.0.26"
+    "tjson": "^1.0.26",
+    "aws-sdk-tcl-s3": "^1.0.17",
+    "tcllib": "^2.0.0"
   },
   "devDependencies": {},
   "description": "Read-only Markdown wiki served from a directory with Jinja templates."

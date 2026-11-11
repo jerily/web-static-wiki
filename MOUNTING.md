@@ -17,3 +17,8 @@ Context includes `title`, `brand`, `home`, `assets`, and `navigation` (label/hre
 Item templates also receive `parent`, `date`, and safe-rendered `markdown_html`;
 index templates receive `entries` (url/title/kind/date). Only `markdown_html` is
 marked safe. Content cannot provide template source.
+
+Image storage is configured on `create` with `-images-directory` and `-s3`.
+Image sources are relative to that directory, with no `..`, absolute/external URLs
+or symlinks. `markdown_html` contains freshly signed image URLs per request; host
+layouts must retain its safe rendering. See [readme.md](readme.md#images-in-private-s3-storage).
