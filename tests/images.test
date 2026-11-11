@@ -1,0 +1,158 @@
+package require tcltest 2
+namespace import ::tcltest::*
+package require web-static-wiki 0.1.1
+package require sha256
+# The unit suite uses a deterministic client; the HTTP integration suite uses awss3.
+package provide awss3 1.0.17
+namespace eval ::aws::s3 {}
+namespace eval image_fixture {}
+proc image_fixture::write {path bytes} {
+    file mkdir [file dirname $path]
+    set channel [open $path wb]
+    try {puts -nonewline $channel $bytes} finally {close $channel}
+}
+proc image_fixture::client {method bucket key args} {
+    variable objects
+    variable calls
+    variable failure
+    lappend calls [list $method $bucket $key {*}$args]
+    if {$method eq $failure} {error "S3 $method failed"}
+    switch -- $method {
+        ls {return [expr {[dict exists $objects $key] ? [list $key] : {}}]}
+        put {
+            lassign $args filename type
+            set channel [open $filename rb]
+            try {dict set objects $key [list [read $channel] $type]} finally {close $channel}
+        }
+        default {error "unexpected method: $method"}
+    }
+}
+proc ::aws::s3::generate_presigned_url {args} {
+    incr ::image_fixture::signatures
+    set ::image_fixture::signArgs $args
+    if {$::image_fixture::unsigned} {return https://bucket.example/unsigned.png}
+    return "https://bucket.example/[lindex $args end]?X-Amz-Signature=[string repeat a 64]&generation=$::image_fixture::signatures"
+}
+proc image_fixture::setup {} {
+    variable directory [makeDirectory image-fixture]
+    variable source [file join $directory pages images.md]
+    variable imageDirectory [file join $directory images]
+    variable objects {}; variable calls {}; variable signatures 0; variable unsigned 0; variable failure {}
+    variable bytes [binary format H* 89504e470d0a1a0a00ff80]
+    write [file join $imageDirectory screens image.png] $bytes
+    write [file join $imageDirectory duplicate.PNG] $bytes
+    write [file join $imageDirectory {café & image.svg}] {<svg xmlns="http://www.w3.org/2000/svg"/>}
+    write $source [encoding convertto utf-8 {# Images
+
+![Inline](screens/image.png "title")
+![Reference][screen]
+![Unicode](<café & image.svg#view>)
+
+[screen]: screens/image.png
+
+`![code](missing.png)`
+
+<img src="missing.png">
+}]
+}
+proc image_fixture::create {args} {
+    variable directory; variable imageDirectory
+    ::web::static::wiki::create -directory [file join $directory pages] -images-directory $imageDirectory \
+        -s3 {client ::image_fixture::client bucket private-images prefix test/images url_expiry_seconds 90} {*}$args
+}
+proc image_fixture::render {store} {
+    set router [::tpathexp::router]
+    try {
+        ::web::static::wiki::mount $router -store $store -prefix /content
+        return [dict get [$router dispatch {method GET path /content/images}] body]
+    } finally {$router destroy}
+}
+proc image_fixture::cleanup {} {removeDirectory image-fixture}
+
+test images-upload {only distinct images are uploaded with binary bytes and MIME types} -setup image_fixture::setup -body {
+    set store [image_fixture::create]
+    set types {}; set binary 0
+    dict for {key object} $image_fixture::objects {
+        lappend types [lindex $object 1]
+        if {[lindex $object 0] eq $image_fixture::bytes} {set binary 1}
+    }
+    set html [image_fixture::render $store]
+    list [dict size $image_fixture::objects] [lsort $types] $binary \
+        [regexp -all {<img src="https://bucket.example/test/images/} $html] \
+        [string match {*&amp;generation=*} $html] [string match {*#view*} $html] \
+        [string match {*title="title"*} $html] [expr {[string first {<code>![code](missing.png)</code>} $html] >= 0}] \
+        [llength [::web::static::wiki::children $store /]]
+} -cleanup image_fixture::cleanup -result {2 {image/png image/svg+xml} 1 3 1 1 1 1 1}
+
+test images-repeat {recreating a snapshot skips existing objects; changed bytes get a new key} -setup image_fixture::setup -body {
+    image_fixture::create
+    set image_fixture::calls {}
+    image_fixture::create
+    set skipped [lsearch -index 0 $image_fixture::calls put]
+    image_fixture::write [file join $image_fixture::imageDirectory screens image.png] changed
+    image_fixture::create
+    list $skipped [dict size $image_fixture::objects] \
+        [llength [lsearch -all -index 0 $image_fixture::calls put]]
+} -cleanup image_fixture::cleanup -result {-1 3 1}
+
+test images-fresh {URLs are signed on every render and the snapshot survives source removal} -setup image_fixture::setup -body {
+    set store [image_fixture::create]
+    set first [image_fixture::render $store]
+    file delete -force $image_fixture::imageDirectory
+    set second [image_fixture::render $store]
+    list [expr {$first ne $second}] $image_fixture::signatures \
+        [lrange $image_fixture::signArgs 0 5] [dict exists $store items /images markdown_html]
+} -cleanup image_fixture::cleanup -result {1 4 {-method GET -expire 90 ::image_fixture::client private-images} 1}
+
+foreach source {../secret.png a/../secret.png %2e%2e/secret.png a/%2e%2e/secret.png a%2f..%2fsecret.png a%5csecret.png /secret.png //example.com/a.png https://example.com/a.png C:/secret.png a\\secret.png .hidden.png a//image.png screens/image.png?x=1 missing.png document.md %00.png %FF.png %GG.png} {
+    test images-invalid-$source {untrusted sources fail before any upload} -setup image_fixture::setup -body {
+        image_fixture::write $image_fixture::source "# Images\n\n!\[Bad\](<$source>)"
+        set result [catch {image_fixture::create} message options]
+        list $result [llength $image_fixture::calls]
+    } -cleanup image_fixture::cleanup -result {1 0}
+}
+
+test images-links {image and directory symlinks cannot escape the root} -setup image_fixture::setup -body {
+    set outside [file join $image_fixture::directory outside.png]
+    image_fixture::write $outside outside
+    file link -symbolic [file join $image_fixture::imageDirectory linked.png] $outside
+    set first [catch {image_fixture::create}]
+    file delete [file join $image_fixture::imageDirectory linked.png]
+    file link -symbolic [file join $image_fixture::directory linked] $image_fixture::imageDirectory
+    list $first [catch {image_fixture::create -images-directory [file join $image_fixture::directory linked]}] \
+        [llength $image_fixture::calls]
+} -cleanup image_fixture::cleanup -result {1 1 0}
+
+test images-size {oversized images are rejected before upload} -setup image_fixture::setup -body {
+    set channel [open [file join $image_fixture::imageDirectory large.png] wb]
+    seek $channel 20971520
+    puts -nonewline $channel x
+    close $channel
+    catch {image_fixture::create} message options
+    list [dict get $options -errorcode] [llength $image_fixture::calls]
+} -cleanup image_fixture::cleanup -result {{WEB STATIC_WIKI 413} 0}
+
+foreach method {ls put} {
+    test images-error-$method {S3 failures abort snapshot creation} -setup image_fixture::setup -body {
+        set image_fixture::failure $method
+        image_fixture::create
+    } -cleanup image_fixture::cleanup -returnCodes error -result "S3 $method failed"
+}
+
+test images-unsigned {missing credentials cannot produce unsigned image URLs} -setup image_fixture::setup -body {
+    set store [image_fixture::create]
+    set image_fixture::unsigned 1
+    image_fixture::render $store
+} -cleanup image_fixture::cleanup -returnCodes error -result {S3 did not return a signed image URL}
+
+test images-settings {invalid S3 settings are rejected} -setup image_fixture::setup -body {
+    set result {}
+    foreach settings {{bucket images} {client test} {client test bucket images url_expiry_seconds 0} \
+            {client test bucket images url_expiry_seconds 604801} {client test bucket images prefix ../bad} \
+            {client test bucket images http_endpoint http://example.com}} {
+        lappend result [catch {image_fixture::create -s3 $settings}]
+    }
+    set result
+} -cleanup image_fixture::cleanup -result {1 1 1 1 1 1}
+
+cleanupTests
