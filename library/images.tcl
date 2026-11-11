@@ -1,9 +1,12 @@
 # Images are resolved only against this snapshot, never from request-time paths.
 proc ::web::static::wiki::image_settings {store} {
-    set settings [options {client {} bucket {} prefix content/images url_expiry_seconds 3600 http_endpoint {}} \
+    set settings [options {client {} bucket {} prefix content/images url_expiry_seconds 3600 http_endpoint {} upload_missing true} \
         {*}[dict get $store -s3]]
     if {[dict get $settings client] eq {} || [dict get $settings bucket] eq {}} {
         error "-s3 requires client and bucket"
+    }
+    if {![string is boolean -strict [dict get $settings upload_missing]]} {
+        error "-s3 upload_missing must be a boolean"
     }
     set endpoint [dict get $settings http_endpoint]
     if {$endpoint ne {} && ![regexp {^http://(127\.0\.0\.1|localhost):[0-9]+$} $endpoint]} {
@@ -112,6 +115,9 @@ proc ::web::static::wiki::prepare_images {store} {
         dict set store items $path markdown_html $html
         dict set store items $path image_references $references
     }
+    # Production builds can upload once; runtime snapshots still validate local
+    # sources and compute identical keys without listing or writing S3 objects.
+    if {![dict get $settings upload_missing]} {return $store}
     set client [dict get $settings client]
     set bucket [dict get $settings bucket]
     set checked {}

@@ -1,6 +1,6 @@
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki 0.1.2
+package require web-static-wiki 0.1.3
 package require sha256
 # The unit suite uses a deterministic client; the HTTP integration suite uses awss3.
 package provide awss3 1.0.17
@@ -106,6 +106,25 @@ test images-repeat {recreating a snapshot skips existing objects; changed bytes 
         [llength [lsearch -all -index 0 $image_fixture::calls put]]
 } -cleanup image_fixture::cleanup -result {-1 3 1}
 
+test images-no-upload {runtime validates and signs the same keys without S3 checks or uploads} -setup image_fixture::setup -body {
+    set built [image_fixture::create]
+    set image_fixture::calls {}
+    set runtime [image_fixture::create -s3 [dict replace [dict get $built -s3] upload_missing false]]
+    set html [image_fixture::render $runtime]
+    list [expr {[dict get $built items] eq [dict get $runtime items]}] \
+        $image_fixture::calls [regexp -all {<img src="https://bucket.example/test/images/} $html]
+} -cleanup image_fixture::cleanup -result {1 {} 3}
+
+test images-no-upload-invalid {runtime still rejects traversal and missing sources} -setup image_fixture::setup -body {
+    set results {}
+    foreach source {../secret.png %2e%2e/secret.png missing.png} {
+        image_fixture::write $image_fixture::source "# Images\n\n!\[Bad\](<$source>)"
+        lappend results [catch {image_fixture::create -s3 \
+            {client ::image_fixture::client bucket private-images upload_missing false}}]
+    }
+    list $results $image_fixture::calls
+} -cleanup image_fixture::cleanup -result {{1 1 1} {}}
+
 test images-fresh {URLs are signed on every render and the snapshot survives source removal} -setup image_fixture::setup -body {
     set store [image_fixture::create]
     set first [image_fixture::render $store]
@@ -160,10 +179,11 @@ test images-settings {invalid S3 settings are rejected} -setup image_fixture::se
     set result {}
     foreach settings {{bucket images} {client test} {client test bucket images url_expiry_seconds 0} \
             {client test bucket images url_expiry_seconds 604801} {client test bucket images prefix ../bad} \
-            {client test bucket images http_endpoint http://example.com}} {
+            {client test bucket images http_endpoint http://example.com} \
+            {client test bucket images upload_missing invalid}} {
         lappend result [catch {image_fixture::create -s3 $settings}]
     }
     set result
-} -cleanup image_fixture::cleanup -result {1 1 1 1 1 1}
+} -cleanup image_fixture::cleanup -result {1 1 1 1 1 1 1}
 
 cleanupTests
