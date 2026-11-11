@@ -45,7 +45,10 @@ proc ::web::static::wiki::scan_images {directory relative imagesVar} {
             if {[file size $filename] > 20971520} {fail 413 "image exceeds 20 MiB: $source"}
             set extension [string tolower [file extension $filename]]
             if {$extension eq ".jpeg"} {set extension .jpg}
-            set digest [string tolower [::sha2::sha256 -hex -filename $filename]]
+            set channel [open $filename rb]
+            try {
+                set digest [string tolower [::twebserver::hex_encode [::twebserver::sha256 [read $channel]]]]
+            } finally {close $channel}
             dict set images $source [dict create filename $filename object $digest$extension \
                 content_type [image_type $filename]]
         }
@@ -78,7 +81,7 @@ proc ::web::static::wiki::image_source {source} {
 proc ::web::static::wiki::prepare_images {store} {
     if {[dict get $store -s3] eq {}} {return $store}
     package require awss3 1.0.17
-    package require sha256 1.0
+    package require twebserver 1.47.55
     set settings [image_settings $store]
     dict set store -s3 $settings
     set directory [dict get $store -images-directory]
@@ -115,27 +118,33 @@ proc ::web::static::wiki::prepare_images {store} {
         dict set store items $path markdown_html $html
         dict set store items $path image_references $references
     }
-    # Production builds can upload once; runtime snapshots still validate local
-    # sources and compute identical keys without listing or writing S3 objects.
+    dict set store images $images
+    # File importers prepare image keys once; database readers use saved keys.
     if {![dict get $settings upload_missing]} {return $store}
+    sync_images $store
+    return $store
+}
+
+# Explicit maintenance operation for a directory store's image inventory.
+proc ::web::static::wiki::sync_images {store} {
+    if {[dict get $store -s3] eq {}} {return}
+    set settings [dict get $store -s3]
     set client [dict get $settings client]
     set bucket [dict get $settings bucket]
     set checked {}
-    dict for {source image} $images {
+    dict for {source image} [dict get $store images] {
         set key [dict get $image key]
         if {[dict exists $checked $key]} {continue}
-        # ls propagates permissions/network failures; the SDK's exists command
-        # currently returns false for every HEAD error, not just missing objects.
         if {$key ni [$client ls $bucket $key]} {
             $client put $bucket $key [dict get $image filename] [dict get $image content_type]
         }
         dict set checked $key 1
     }
-    return $store
 }
 
 proc ::web::static::wiki::render_markdown {store item} {
     if {![dict exists $item image_references]} {
+        if {[dict exists $item markdown_html]} {return [dict get $item markdown_html]}
         return [::cmark_gfm::render_gfm_html [dict get $item markdown]]
     }
     set settings [dict get $store -s3]
