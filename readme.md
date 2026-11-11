@@ -28,7 +28,7 @@ ttrek install web-static-wiki
 ```
 
 ```tcl
-package require web-static-wiki 0.1.1
+package require web-static-wiki 0.1.2
 set store [::web::static::wiki::create -directory ./content/wiki -title Wiki]
 set router [::tpathexp::router]
 ::web::static::wiki::mount $router -store $store -prefix /wiki
@@ -36,7 +36,7 @@ puts [dict get [$router dispatch {method GET path /wiki}] body]
 $router destroy
 ```
 
-Public commands: `create -directory directory ?-title title? ?-images-directory directory? ?-s3 settings?`, `load store /path`,
+Public commands: `create -directory directory ?-title title? ?-exclude_from_navigation paths? ?-images-directory directory? ?-s3 settings?`, `load store /path`,
 `children store /folder`, and `mount router -store store ?options...?`.
 The store is an immutable Tcl dictionary containing the validated directory snapshot.
 A missing directory is an error; an empty directory serves an empty index.
@@ -46,6 +46,24 @@ are rejected. A file is limited to 1 MiB. The first Markdown heading supplies it
 title, falling back to the filename stem. Folder names and titles become lowercase
 ASCII URL slugs. Empty slugs become `wiki-item`. Duplicate canonical paths fail.
 The index lists immediate children with folders first. Empty folders remain navigable.
+
+To keep asset folders out of directory listings:
+
+```tcl
+set store [::web::static::wiki::create -directory ./content/wiki \
+    -exclude_from_navigation {images drafts/notes.md}]
+```
+
+Available since 0.1.2, `-exclude_from_navigation` is a Tcl list of literal,
+case-sensitive source paths relative to `-directory`, using `/` separators.
+An entry hides that file or directory and its descendants from all directory
+listings. Paths are source filenames, not title-derived URLs; glob characters
+are literal. Absolute paths, backslashes, empty segments, `.` and `..` are
+rejected. An empty list (the default) leaves navigation unchanged.
+
+This only affects navigation. Excluded content is still validated and available
+at its direct URL; the option is not access control. Image discovery, uploads,
+and Markdown image rendering are unaffected.
 
 For source installation and tests:
 

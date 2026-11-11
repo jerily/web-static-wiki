@@ -1,6 +1,6 @@
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki 0.1.1
+package require web-static-wiki 0.1.2
 namespace eval fixture {}
 proc fixture::write {path text} {
     set ch [open $path w]; fconfigure $ch -encoding utf-8
@@ -93,5 +93,50 @@ test content-10 {custom layout and multiple independent mounts} -setup fixture::
         list [string match {<header>A &amp; B*</article>*} [dict get $a body]] [dict get $b statusCode]
     } finally {$router destroy}
 } -cleanup fixture::cleanup -result {1 200}
+
+test navigation-folders {hidden subtrees keep direct URLs and do not hide similarly named folders} -setup fixture::setup -body {
+    file mkdir [file join $fixture::root images nested] [file join $fixture::root images-more] \
+        [file join $fixture::root Folder images]
+    fixture::write [file join $fixture::root images nested note.md] {# Hidden guide}
+    set store [::web::static::wiki::create -directory $fixture::root -exclude_from_navigation {images}]
+    set router [::tpathexp::router]
+    try {
+        ::web::static::wiki::mount $router -store $store -prefix /wiki
+        list [lmap item [::web::static::wiki::children $store /] {dict get $item path}] \
+            [lmap item [::web::static::wiki::children $store /folder] {dict get $item path}] \
+            [::web::static::wiki::children $store /images] \
+            [::web::static::wiki::children $store /images/nested] \
+            [dict get [$router dispatch {method GET path /wiki/images/nested/hidden-guide}] statusCode] \
+            [string match {*href="/wiki/images"*} [dict get [$router dispatch {method GET path /wiki}] body]]
+    } finally {$router destroy}
+} -cleanup fixture::cleanup -result {{/folder /images-more /guide} /folder/images {} {} 200 0}
+
+test navigation-files {multiple source paths match literally, independently of page titles} -setup fixture::setup -body {
+    fixture::write [file join $fixture::root Folder private.md] {# Different title}
+    fixture::write [file join $fixture::root {draft[1].md}] {# Hidden draft}
+    fixture::write [file join $fixture::root draft1.md] {# Keep me}
+    set store [::web::static::wiki::create -directory $fixture::root \
+        -exclude_from_navigation {Folder/private.md {draft[1].md}}]
+    list [lmap item [::web::static::wiki::children $store /] {dict get $item path}] \
+        [::web::static::wiki::children $store /folder] \
+        [dict get [::web::static::wiki::load $store /folder/different-title] title]
+} -cleanup fixture::cleanup -result {{/folder /guide /keep-me} {} {Different title}}
+
+test navigation-invalid {exclusions must be unambiguous relative source paths} -setup fixture::setup -body {
+    set errors {}
+    foreach path [list {} /images ../images ./images images/ images//nested images/../nested \
+            images/./nested {images\nested} C:/images "images\x00"] {
+        catch {::web::static::wiki::create -directory $fixture::root -exclude_from_navigation [list $path]} message options
+        lappend errors [dict get $options -errorcode]
+    }
+    lsort -unique $errors
+} -cleanup fixture::cleanup -result {{WEB STATIC_WIKI 400}}
+
+test navigation-validation {hiding a page does not bypass source validation} -setup fixture::setup -body {
+    fixture::write [file join $fixture::root duplicate.md] {# Guide}
+    catch {::web::static::wiki::create -directory $fixture::root \
+        -exclude_from_navigation {duplicate.md}} message options
+    dict get $options -errorcode
+} -cleanup fixture::cleanup -result {WEB STATIC_WIKI 409}
 
 cleanupTests
