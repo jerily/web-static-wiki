@@ -1,6 +1,6 @@
 # Images are resolved only against this snapshot, never from request-time paths.
 proc ::web::static::wiki::image_settings {store} {
-    set settings [options {client {} bucket {} prefix content/images url_expiry_seconds 3600 http_endpoint {} upload_missing true} \
+    set settings [options {client {} bucket {} prefix content/images url_expiry_seconds 3600 http_endpoint {} upload_missing true cdn_url {}} \
         {*}[dict get $store -s3]]
     if {[dict get $settings client] eq {} || [dict get $settings bucket] eq {}} {
         error "-s3 requires client and bucket"
@@ -12,6 +12,11 @@ proc ::web::static::wiki::image_settings {store} {
     if {$endpoint ne {} && ![regexp {^http://(127\.0\.0\.1|localhost):[0-9]+$} $endpoint]} {
         error "-s3 http_endpoint must be a loopback HTTP endpoint"
     }
+    set cdn [string trimright [dict get $settings cdn_url] /]
+    if {$cdn ne {} && ![regexp {^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$} $cdn]} {
+        error "-s3 cdn_url must be an HTTPS origin without a path"
+    }
+    dict set settings cdn_url $cdn
     set expiry [dict get $settings url_expiry_seconds]
     if {![string is integer -strict $expiry] || $expiry < 1 || $expiry > 604800} {
         error "-s3 url_expiry_seconds must be between 1 and 604800"
@@ -43,13 +48,7 @@ proc ::web::static::wiki::scan_images {directory relative imagesVar} {
             scan_images $filename $source images
         } elseif {$type eq "file" && [image_type $filename] ne {}} {
             if {[file size $filename] > 20971520} {fail 413 "image exceeds 20 MiB: $source"}
-            set extension [string tolower [file extension $filename]]
-            if {$extension eq ".jpeg"} {set extension .jpg}
-            set channel [open $filename rb]
-            try {
-                set digest [string tolower [::twebserver::hex_encode [::twebserver::sha256 [read $channel]]]]
-            } finally {close $channel}
-            dict set images $source [dict create filename $filename object $digest$extension \
+            dict set images $source [dict create filename $filename \
                 content_type [image_type $filename]]
         }
     }
@@ -81,7 +80,6 @@ proc ::web::static::wiki::image_source {source} {
 proc ::web::static::wiki::prepare_images {store} {
     if {[dict get $store -s3] eq {}} {return $store}
     package require awss3 1.0.17
-    package require twebserver 1.47.55
     set settings [image_settings $store]
     dict set store -s3 $settings
     set directory [dict get $store -images-directory]
@@ -100,7 +98,7 @@ proc ::web::static::wiki::prepare_images {store} {
     scan_images [dict get $store -images-directory] {} images
     set prefix [dict get $settings prefix]
     dict for {source image} $images {
-        set key [dict get $image object]
+        set key $source
         if {$prefix ne {}} {set key $prefix/$key}
         dict set images $source key $key
     }
@@ -131,15 +129,42 @@ proc ::web::static::wiki::sync_images {store} {
     set settings [dict get $store -s3]
     set client [dict get $settings client]
     set bucket [dict get $settings bucket]
-    set checked {}
+    package require twebserver 1.47.55
     dict for {source image} [dict get $store images] {
         set key [dict get $image key]
-        if {[dict exists $checked $key]} {continue}
-        if {$key ni [$client ls $bucket $key]} {
-            $client put $bucket $key [dict get $image filename] [dict get $image content_type]
+        set filename [dict get $image filename]
+        set digest [image_digest $filename]
+        if {$key in [$client ls $bucket $key]} {
+            # The SDK's in-memory get is text-only. A disposable file preserves
+            # binary image bytes, including NULs, when comparing remote content.
+            set channel [file tempfile downloaded]
+            close $channel
+            try {
+                $client get $bucket $key $downloaded
+                if {[image_digest $downloaded] eq $digest} {continue}
+            } finally {file delete -force $downloaded}
         }
-        dict set checked $key 1
+        $client put $bucket $key $filename [dict get $image content_type]
     }
+}
+
+# Digests are used only by sync, never for object names or rendered references.
+proc ::web::static::wiki::image_digest {filename} {
+    set channel [open $filename rb]
+    try {return [::twebserver::sha256 [read $channel]]} finally {close $channel}
+}
+
+# Encode UTF-8 bytes without losing nested S3 path separators.
+proc ::web::static::wiki::image_url_path {key} {
+    set path {}
+    binary scan [encoding convertto utf-8 $key] cu* bytes
+    foreach byte $bytes {
+        set char [format %c $byte]
+        if {[regexp {^[A-Za-z0-9_./~-]$} $char]} {
+            append path $char
+        } else {append path [format "%%%02X" $byte]}
+    }
+    return $path
 }
 
 proc ::web::static::wiki::render_markdown {store item} {
@@ -153,16 +178,20 @@ proc ::web::static::wiki::render_markdown {store item} {
     dict for {source reference} [dict get $item image_references] {
         lassign $reference key fragment
         if {![dict exists $urls $key]} {
-            set url [::aws::s3::generate_presigned_url -method GET \
-                -expire [dict get $settings url_expiry_seconds] [dict get $settings client] \
-                [dict get $settings bucket] $key]
-            set validOrigin [string match https://* $url]
-            if {[dict get $settings http_endpoint] ne {}} {
-                set validOrigin [string match "[dict get $settings http_endpoint]/*" $url]
-            }
-            if {!$validOrigin || [regexp {[\x00-\x20\x7f]} $url] ||
-                ![regexp {[?&]X-Amz-Signature=[0-9a-fA-F]{64}(&|$)} $url]} {
-                error "S3 did not return a signed image URL"
+            if {[dict get $settings cdn_url] ne {}} {
+                set url [dict get $settings cdn_url]/[image_url_path $key]
+            } else {
+                set url [::aws::s3::generate_presigned_url -method GET \
+                    -expire [dict get $settings url_expiry_seconds] [dict get $settings client] \
+                    [dict get $settings bucket] $key]
+                set validOrigin [string match https://* $url]
+                if {[dict get $settings http_endpoint] ne {}} {
+                    set validOrigin [string match "[dict get $settings http_endpoint]/*" $url]
+                }
+                if {!$validOrigin || [regexp {[\x00-\x20\x7f]} $url] ||
+                    ![regexp {[?&]X-Amz-Signature=[0-9a-fA-F]{64}(&|$)} $url]} {
+                    error "S3 did not return a signed image URL"
+                }
             }
             dict set urls $key $url
         }

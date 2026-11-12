@@ -20,6 +20,7 @@ proc sync_fixture::client {method bucket key args} {
     if {$method eq $failure} {error "S3 failed"}
     switch -- $method {
         ls {return [dict keys $objects $key]}
+        get {write [lindex $args 0] [dict get $objects $key]}
         put {
             set channel [open [lindex $args 0] rb]
             try {dict set objects $key [read $channel]} finally {close $channel}
@@ -79,7 +80,7 @@ test sync-runtime {each load queries one item; no source, image hashing or Markd
         set atStartup $::sql_rows
         set item [::web::static::wiki::load $store /guide]
         set html [::web::static::wiki::render_markdown $store $item]
-        list $atStartup $::sql_rows [string match {*https://images.example/test/images/*} $html] \
+        list $atStartup $::sql_rows [string match {*https://images.example/test/images/pixel.png?*} $html] \
             [string match {*<strong>bold</strong>*} $html] $sync_fixture::calls
     } finally {
         rename ::twebserver::sha256 {}; rename ::twebserver::saved_sha256 ::twebserver::sha256
