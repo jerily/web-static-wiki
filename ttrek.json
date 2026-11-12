@@ -1,6 +1,6 @@
 {
   "name": "web-static-wiki",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "scripts": {},
   "dependencies": {
     "tcl": ">=8.6.0,<10.0.0",
