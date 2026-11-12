@@ -1,6 +1,6 @@
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki 0.1.3
+package require web-static-wiki 0.1.5
 package require twebserver 1.47.55
 # The unit suite uses a deterministic client; the HTTP integration suite uses awss3.
 package provide awss3 1.0.17
@@ -19,6 +19,7 @@ proc image_fixture::client {method bucket key args} {
     if {$method eq $failure} {error "S3 $method failed"}
     switch -- $method {
         ls {return [expr {[dict exists $objects $key] ? [list $key] : {}}]}
+        get {write [lindex $args 0] [lindex [dict get $objects $key] 0]}
         put {
             lassign $args filename type
             set channel [open $filename rb]
@@ -31,7 +32,8 @@ proc ::aws::s3::generate_presigned_url {args} {
     incr ::image_fixture::signatures
     set ::image_fixture::signArgs $args
     if {$::image_fixture::unsigned} {return https://bucket.example/unsigned.png}
-    return "https://bucket.example/[lindex $args end]?X-Amz-Signature=[string repeat a 64]&generation=$::image_fixture::signatures"
+    set key [string map {" " %20 & %26 é %C3%A9} [lindex $args end]]
+    return "https://bucket.example/$key?X-Amz-Signature=[string repeat a 64]&generation=$::image_fixture::signatures"
 }
 proc image_fixture::setup {} {
     variable directory [makeDirectory image-fixture]
@@ -69,7 +71,7 @@ proc image_fixture::render {store} {
 }
 proc image_fixture::cleanup {} {removeDirectory image-fixture}
 
-test images-upload {only distinct images are uploaded with binary bytes and MIME types} -setup image_fixture::setup -body {
+test images-upload {each path is uploaded with binary bytes and MIME types} -setup image_fixture::setup -body {
     set store [image_fixture::create]
     set types {}; set binary 0
     dict for {key object} $image_fixture::objects {
@@ -82,7 +84,7 @@ test images-upload {only distinct images are uploaded with binary bytes and MIME
         [string match {*&amp;generation=*} $html] [string match {*#view*} $html] \
         [string match {*title="title"*} $html] [expr {[string first {<code>![code](missing.png)</code>} $html] >= 0}] \
         [llength [::web::static::wiki::children $store /]]
-} -cleanup image_fixture::cleanup -result {2 {image/png image/svg+xml} 1 3 1 1 1 1 1}
+} -cleanup image_fixture::cleanup -result {3 {image/png image/png image/svg+xml} 1 3 1 1 1 1 1}
 
 test images-navigation {images in a hidden content folder are still uploaded and rendered} -setup image_fixture::setup -body {
     set content [file join $image_fixture::directory pages]
@@ -95,21 +97,56 @@ test images-navigation {images in a hidden content folder are still uploaded and
         [string match {*<img src="https://bucket.example/test/images/*} [image_fixture::render $store]]
 } -cleanup image_fixture::cleanup -result {1 /images 1}
 
-test images-repeat {recreating a snapshot skips existing objects; changed bytes get a new key} -setup image_fixture::setup -body {
-    image_fixture::create
+test images-paths {object keys and signed URLs preserve relative paths and filename case} -setup image_fixture::setup -body {
+    set store [image_fixture::create]
+    set html [image_fixture::render $store]
+    list [lsort [dict keys $image_fixture::objects]] \
+        [string match {*<img src="https://bucket.example/test/images/screens/image.png?*} $html] \
+        [string match {*<img src="https://bucket.example/test/images/caf%C3%A9%20%26%20image.svg?*} $html]
+} -cleanup image_fixture::cleanup -result [list \
+    [list {test/images/café & image.svg} test/images/duplicate.PNG test/images/screens/image.png] 1 1]
+
+test images-prefix {empty and slash-trimmed prefixes preserve the source path} -setup image_fixture::setup -body {
+    set keys {}
+    foreach prefix {{} /custom/prefix/} {
+        set store [image_fixture::create -s3 [dict create client ::image_fixture::client bucket private-images prefix $prefix]]
+        lappend keys [dict get $store images screens/image.png key]
+    }
+    set keys
+} -cleanup image_fixture::cleanup -result {screens/image.png custom/prefix/screens/image.png}
+
+test images-repeat {unchanged bytes are skipped and changed bytes replace the same key} -setup image_fixture::setup -body {
+    set first [image_fixture::create]
     set image_fixture::calls {}
     image_fixture::create
     set skipped [lsearch -index 0 $image_fixture::calls put]
     image_fixture::write [file join $image_fixture::imageDirectory screens image.png] changed
-    image_fixture::create
+    set second [image_fixture::create]
     list $skipped [dict size $image_fixture::objects] \
-        [llength [lsearch -all -index 0 $image_fixture::calls put]]
-} -cleanup image_fixture::cleanup -result {-1 3 1}
+        [llength [lsearch -all -index 0 $image_fixture::calls put]] \
+        [lindex [dict get $image_fixture::objects test/images/screens/image.png] 0] \
+        [expr {[dict get $first items] eq [dict get $second items]}]
+} -cleanup image_fixture::cleanup -result {-1 3 1 changed 1}
+
+test images-get-error {failed remote comparisons abort sync and remove temporary files} -setup image_fixture::setup -body {
+    image_fixture::create
+    set image_fixture::failure get
+    set failed [catch {image_fixture::create} message]
+    set downloaded [lindex [lindex $image_fixture::calls end] end]
+    list $failed $message [file exists $downloaded]
+} -cleanup image_fixture::cleanup -result {1 {S3 get failed} 0}
 
 test images-no-upload {runtime validates and signs the same keys without S3 checks or uploads} -setup image_fixture::setup -body {
     set built [image_fixture::create]
     set image_fixture::calls {}
-    set runtime [image_fixture::create -s3 [dict replace [dict get $built -s3] upload_missing false]]
+    rename ::twebserver::sha256 ::twebserver::saved_sha256
+    proc ::twebserver::sha256 {args} {error "Runtime hashing forbidden"}
+    try {
+        set runtime [image_fixture::create -s3 [dict replace [dict get $built -s3] upload_missing false]]
+    } finally {
+        rename ::twebserver::sha256 {}
+        rename ::twebserver::saved_sha256 ::twebserver::sha256
+    }
     set html [image_fixture::render $runtime]
     list [expr {[dict get $built items] eq [dict get $runtime items]}] \
         $image_fixture::calls [regexp -all {<img src="https://bucket.example/test/images/} $html]
@@ -175,15 +212,27 @@ test images-unsigned {missing credentials cannot produce unsigned image URLs} -s
     image_fixture::render $store
 } -cleanup image_fixture::cleanup -returnCodes error -result {S3 did not return a signed image URL}
 
+test images-cdn {CDN delivery uses encoded path URLs and never invokes the signer} -setup image_fixture::setup -body {
+    set store [image_fixture::create -s3 {client ::image_fixture::client bucket private-images prefix test/images cdn_url https://cdn.example/}]
+    set image_fixture::unsigned 1
+    set html [image_fixture::render $store]
+    list $image_fixture::signatures \
+        [string match {*<img src="https://cdn.example/test/images/screens/image.png"*} $html] \
+        [string match {*<img src="https://cdn.example/test/images/caf%C3%A9%20%26%20image.svg#view"*} $html] \
+        [string match {*X-Amz-Signature*} $html]
+} -cleanup image_fixture::cleanup -result {0 1 1 0}
+
 test images-settings {invalid S3 settings are rejected} -setup image_fixture::setup -body {
     set result {}
     foreach settings {{bucket images} {client test} {client test bucket images url_expiry_seconds 0} \
             {client test bucket images url_expiry_seconds 604801} {client test bucket images prefix ../bad} \
             {client test bucket images http_endpoint http://example.com} \
-            {client test bucket images upload_missing invalid}} {
+            {client test bucket images upload_missing invalid} \
+            {client test bucket images cdn_url http://cdn.example} \
+            {client test bucket images cdn_url https://cdn.example/path}} {
         lappend result [catch {image_fixture::create -s3 $settings}]
     }
     set result
-} -cleanup image_fixture::cleanup -result {1 1 1 1 1 1 1}
+} -cleanup image_fixture::cleanup -result {1 1 1 1 1 1 1 1 1}
 
 cleanupTests

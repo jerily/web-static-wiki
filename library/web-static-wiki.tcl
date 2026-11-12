@@ -14,4 +14,4 @@ source [file join $::web::static::wiki::root library templates.tcl]
 source [file join $::web::static::wiki::root library http.tcl]
 source [file join $::web::static::wiki::root library mount.tcl]
 source [file join $::web::static::wiki::root library sync.tcl]
-package provide web-static-wiki 0.1.4
+package provide web-static-wiki 0.1.5

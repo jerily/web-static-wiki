@@ -42,8 +42,12 @@ class S3(BaseHTTPRequestHandler):
         if key not in self.server.objects:
             self.reply(404)
             return
-        assert len(query["X-Amz-Signature"][0]) == 64
-        assert query["X-Amz-Expires"] == ["90"]
+        if "X-Amz-Signature" in query:
+            assert len(query["X-Amz-Signature"][0]) == 64
+            assert query["X-Amz-Expires"] == ["90"]
+        else:
+            assert self.headers["Authorization"].startswith("AWS4-HMAC-SHA256 ")
+            self.server.comparisons += 1
         data, content_type = self.server.objects[key]
         self.reply(200, data, content_type)
 
@@ -62,7 +66,7 @@ def main():
     args = parser.parse_args()
     env = dict(os.environ, AWS_EC2_METADATA_DISABLED="true", AWS_REQUEST_CHECKSUM_CALCULATION="when_required")
     with ThreadingHTTPServer(("127.0.0.1", 0), S3) as server:
-        server.objects, server.puts, server.listings = {}, 0, 0
+        server.objects, server.puts, server.listings, server.comparisons = {}, 0, 0, 0
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -72,10 +76,12 @@ def main():
                                          directory], env=env, timeout=60)
             if result.returncode:
                 return result.returncode
-            assert server.puts == 3, f"expected two images plus one changed image, got {server.puts} PUTs"
-            assert server.listings == 8
-            assert sorted(type_ for _, type_ in server.objects.values()) == ["image/png", "image/png", "image/svg+xml"]
-            print("S3 HTTP checks passed: binary uploads, MIME types, deduplication, signed downloads and failures")
+            assert server.puts == 5, f"expected four paths plus one changed image, got {server.puts} PUTs"
+            assert server.listings == 13
+            assert server.comparisons == 8
+            assert sorted(server.objects) == ["test/images/café & image.svg", "test/images/copy.png", "test/images/diagram.svg", "test/images/pixel.png"]
+            assert sorted(type_ for _, type_ in server.objects.values()) == ["image/png", "image/png", "image/svg+xml", "image/svg+xml"]
+            print("S3 HTTP checks passed: binary uploads, MIME types, path keys, change detection, signed downloads and failures")
             return 0
         finally:
             server.shutdown()

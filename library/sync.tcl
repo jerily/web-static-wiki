@@ -64,7 +64,7 @@ proc ::web::static::wiki::sync {store directory} {
     if {[dict get $options -s3] ne {}} {dict set options -s3 upload_missing false}
     set source [create {*}$options]
     # Publish images before committing references to them. Failed uploads leave
-    # the database untouched; immutable uploaded objects can be reused on retry.
+    # the database untouched. S3 replacements are independent of SQL rollback.
     sync_images $source
     set connection [dict get $store -connection]
     db_transaction $connection {

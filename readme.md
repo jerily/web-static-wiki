@@ -132,21 +132,24 @@ Keep the trusted content and image directories unchanged while creating a store.
 
 PNG, JPEG, GIF, WebP, AVIF, SVG, ICO and BMP files are indexed recursively (dotfiles
 are ignored). The limit is 20 MiB per image. All indexed images, including unused
-ones, are uploaded during `create` if absent from S3 and `upload_missing` is true
-(the default). Keys contain the SHA-256 of
-the bytes and a normalized extension, under the configured prefix. Identical files
-share an object; changing bytes creates a new object without breaking old snapshots.
-Existing objects are left untouched and old objects are not deleted automatically.
-Uploads set the matching image MIME type. Listing/upload errors abort creation.
+ones, are synchronized during `create` when `upload_missing` is true (the default).
+Keys use the relative image path under the configured prefix, preserving nested
+folders, filename case and extensions: `site/images/screens/install.png`.
+Different paths remain separate objects even when their bytes are identical.
+SHA-256 is used only during synchronization: existing objects are downloaded to
+a temporary binary file and compared with the local file. Unchanged files are
+skipped; changed files replace the object at the same key. No checksum objects or
+hash-based URL variants are created. Removed files are not deleted automatically.
+Uploads set the matching image MIME type. Listing, download or upload errors abort
+creation. S3 replacements cannot be rolled back with database transactions.
 
-For production, call `create` with `upload_missing true` during the build, then
-use `upload_missing false` in the runtime's `-s3` dictionary. Runtime creation
-still validates sources and computes the same keys, but makes no S3 LIST or PUT
-calls. Bundle the same image files and use the same bucket/prefix in both stages;
-missing S3 objects will not be repaired at runtime. A failed build upload must
-prevent deployment. Local development can keep the default automatic uploads.
+For production, call `create` with `upload_missing true` during maintenance, then
+use `upload_missing false` in the runtime's `-s3` dictionary. Directory-store
+creation still validates sources and prepares paths but does not hash files or
+make S3 calls. Database stores use saved references without reading local files.
+Missing S3 objects are repaired only by synchronization.
 
-Each rendered response gets freshly signed GET URLs; no expiring URLs are stored
+By default, each rendered response gets freshly signed GET URLs; no expiring URLs are stored
 in Markdown or in the snapshot. HTML attributes escape the signed URL correctly.
 `url_expiry_seconds` defaults to 3600 and must be 1–604800. Already-open pages may
 need reloading after expiry, and temporary credentials may expire sooner. Page
@@ -154,7 +157,8 @@ responses retain `Cache-Control: no-store`.
 
 The S3 settings are `client`, `bucket`, `prefix` (default `content/images`) and
 `url_expiry_seconds`, plus the boolean `upload_missing` (default true). Uploads
-need `s3:ListBucket` for the object prefix and `s3:PutObject` for missing images.
+need `s3:ListBucket` for the object prefix, `s3:GetObject` for content comparisons
+and `s3:PutObject` for missing or changed images.
 A runtime using `upload_missing false` only needs `s3:GetObject` for signed downloads. No public
 bucket ACL is needed. For local tests only, `http_endpoint` may name a loopback
 HTTP origin (e.g. `http://127.0.0.1:9000`); it must match the SDK client endpoint.
@@ -169,6 +173,13 @@ loopback HTTP fixture (no AWS credentials or account needed), run:
 python3 tests/images_server.py --tclsh tclsh9.1 \
   --library /path/to/aws-sdk-tcl-s3/libaws-sdk-tcl-s3.so
 ```
+
+For CloudFront delivery, set `cdn_url https://your-distribution.cloudfront.net`
+in `-s3`. Rendering then appends the full, UTF-8 URL-encoded S3 key to this HTTPS
+origin, preserving `/` separators and fragments, and does not call the S3 signer.
+The CDN origin must map these paths to the same bucket; use an origin access
+control and a bucket policy limited to the required prefixes. Without `cdn_url`,
+URLs remain signed S3 URLs. Configure a bounded CDN cache TTL for stable paths.
 
 ## Explicit database initialization and synchronization
 
@@ -188,8 +199,8 @@ query metadata without article bodies. Existing readers see synced changes on th
 next query. The host closes the connection when its worker stops.
 
 `sync` validates source files, prepares rendered Markdown and image keys, uploads
-missing images, and replaces the domain's rows in one transaction. Image-upload
-failures leave the previous database content intact. Expiring image URLs are signed
+missing or changed images, and replaces the domain's rows in one transaction. Image-upload
+failures leave the previous database content intact; completed S3 replacements remain. Expiring image URLs are signed
 when rendering a requested item. `initdb` is idempotent and never called by `sync`,
 store creation, mounting or request handling. Directory stores keep their original
 local behavior. There are no snapshot files to build, publish or load.
