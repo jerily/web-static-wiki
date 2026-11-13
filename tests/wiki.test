@@ -1,6 +1,6 @@
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki 0.1.3
+package require web-static-wiki 0.1.6
 namespace eval fixture {}
 proc fixture::write {path text} {
     set ch [open $path w]; fconfigure $ch -encoding utf-8
@@ -65,8 +65,8 @@ test content-6 {source symlinks are rejected} -setup fixture::setup -body {
     catch {::web::static::wiki::create -directory $fixture::root} message options
     dict get $options -errorcode
 } -cleanup fixture::cleanup -result {WEB STATIC_WIKI 400}
-test content-7 {duplicate slugs abort loading} -setup fixture::setup -body {
-    fixture::write [file join $fixture::root duplicate.md] "# Guide"
+test content-7 {duplicate filename slugs abort loading} -setup fixture::setup -body {
+    fixture::write [file join $fixture::root Guide.markdown] "# Different title"
     catch {::web::static::wiki::create -directory $fixture::root} message options
     dict get $options -errorcode
 } -cleanup fixture::cleanup -result {WEB STATIC_WIKI 409}
@@ -94,6 +94,17 @@ test content-10 {custom layout and multiple independent mounts} -setup fixture::
     } finally {$router destroy}
 } -cleanup fixture::cleanup -result {1 200}
 
+test content-filenames {filename stems determine paths independently of headings} -setup fixture::setup -body {
+    fixture::write [file join $fixture::root guide.md] {# Understanding the guide}
+    fixture::write [file join $fixture::root Folder {Other Guide.markdown}] {# Understanding the guide}
+    fixture::write [file join $fixture::root untitled.md] {No heading here.}
+    set store [::web::static::wiki::create -directory $fixture::root]
+    list [dict get [::web::static::wiki::load $store /guide] title] \
+        [dict get [::web::static::wiki::load $store /folder/other-guide] title] \
+        [dict get [::web::static::wiki::load $store /untitled] title] \
+        [catch {::web::static::wiki::load $store /understanding-the-guide}]
+} -cleanup fixture::cleanup -result {{Understanding the guide} {Understanding the guide} untitled 1}
+
 test navigation-folders {hidden subtrees keep direct URLs and do not hide similarly named folders} -setup fixture::setup -body {
     file mkdir [file join $fixture::root images nested] [file join $fixture::root images-more] \
         [file join $fixture::root Folder images]
@@ -106,7 +117,7 @@ test navigation-folders {hidden subtrees keep direct URLs and do not hide simila
             [lmap item [::web::static::wiki::children $store /folder] {dict get $item path}] \
             [::web::static::wiki::children $store /images] \
             [::web::static::wiki::children $store /images/nested] \
-            [dict get [$router dispatch {method GET path /wiki/images/nested/hidden-guide}] statusCode] \
+            [dict get [$router dispatch {method GET path /wiki/images/nested/note}] statusCode] \
             [string match {*href="/wiki/images"*} [dict get [$router dispatch {method GET path /wiki}] body]]
     } finally {$router destroy}
 } -cleanup fixture::cleanup -result {{/folder /images-more /guide} /folder/images {} {} 200 0}
@@ -114,13 +125,13 @@ test navigation-folders {hidden subtrees keep direct URLs and do not hide simila
 test navigation-files {multiple source paths match literally, independently of page titles} -setup fixture::setup -body {
     fixture::write [file join $fixture::root Folder private.md] {# Different title}
     fixture::write [file join $fixture::root {draft[1].md}] {# Hidden draft}
-    fixture::write [file join $fixture::root draft1.md] {# Keep me}
+    fixture::write [file join $fixture::root draft2.md] {# Keep me}
     set store [::web::static::wiki::create -directory $fixture::root \
         -exclude_from_navigation {Folder/private.md {draft[1].md}}]
     list [lmap item [::web::static::wiki::children $store /] {dict get $item path}] \
         [::web::static::wiki::children $store /folder] \
-        [dict get [::web::static::wiki::load $store /folder/different-title] title]
-} -cleanup fixture::cleanup -result {{/folder /guide /keep-me} {} {Different title}}
+        [dict get [::web::static::wiki::load $store /folder/private] title]
+} -cleanup fixture::cleanup -result {{/folder /guide /draft2} {} {Different title}}
 
 test navigation-invalid {exclusions must be unambiguous relative source paths} -setup fixture::setup -body {
     set errors {}
@@ -133,9 +144,9 @@ test navigation-invalid {exclusions must be unambiguous relative source paths} -
 } -cleanup fixture::cleanup -result {{WEB STATIC_WIKI 400}}
 
 test navigation-validation {hiding a page does not bypass source validation} -setup fixture::setup -body {
-    fixture::write [file join $fixture::root duplicate.md] {# Guide}
+    fixture::write [file join $fixture::root Guide.markdown] {# Different title}
     catch {::web::static::wiki::create -directory $fixture::root \
-        -exclude_from_navigation {duplicate.md}} message options
+        -exclude_from_navigation {Guide.markdown}} message options
     dict get $options -errorcode
 } -cleanup fixture::cleanup -result {WEB STATIC_WIKI 409}
 
