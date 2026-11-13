@@ -1,6 +1,6 @@
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki
+package require web-static-wiki 0.1.6
 package provide awss3 1.0.17
 namespace eval sync_fixture {}
 namespace eval ::aws::s3 {}
@@ -97,12 +97,41 @@ test sync-update {existing readers see new content on their next query; domains 
     sync_fixture::write [file join $sync_fixture::root pages guide.md] {# Updated
 New text.}
     ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
-    set item [::web::static::wiki::load $sync_fixture::store /updated]
+    set item [::web::static::wiki::load $sync_fixture::store /guide]
     set listing [::web::static::wiki::children $sync_fixture::store /]
     list [dict get $item title] [dict get [::web::static::wiki::load $other /guide] title] \
-        [catch {::web::static::wiki::load $sync_fixture::store /guide}] \
+        [string match {*New text.*} [::web::static::wiki::render_markdown $sync_fixture::store $item]] \
         [dict exists [lindex $listing 0] markdown]
 } -cleanup sync_fixture::cleanup -result {Updated Guide 1 0}
+
+test sync-remove {deleted files and folders disappear without affecting other domains} -setup sync_fixture::setup -body {
+    sync_fixture::write [file join $sync_fixture::root pages nested old.md] {# Old page}
+    ::web::static::wiki::initdb $sync_fixture::db
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    set other [dict replace $sync_fixture::store -domain other]
+    ::web::static::wiki::sync $other [file join $sync_fixture::root pages]
+    file delete [file join $sync_fixture::root pages guide.md]
+    file delete -force [file join $sync_fixture::root pages nested]
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    set errors {}
+    foreach path {/guide /nested /nested/old} {
+        catch {::web::static::wiki::load $sync_fixture::store $path} message options
+        lappend errors [dict get $options -errorcode]
+    }
+    list [lsort -unique $errors] [::web::static::wiki::children $sync_fixture::store /] \
+        [dict get [::web::static::wiki::load $other /guide] title] \
+        [dict get [::web::static::wiki::load $other /nested/old] title]
+} -cleanup sync_fixture::cleanup -result {{{WEB STATIC_WIKI 404}} {} Guide {Old page}}
+
+test sync-migrate {sync removes legacy heading-based URLs} -setup sync_fixture::setup -body {
+    ::web::static::wiki::initdb $sync_fixture::db
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    ::tpersist::_raw $sync_fixture::db {UPDATE web_static_wiki_items SET path = '/old-heading' WHERE path = '/guide'}
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    list [dict get [::web::static::wiki::load $sync_fixture::store /guide] title] \
+        [catch {::web::static::wiki::load $sync_fixture::store /old-heading}] \
+        [llength [::web::static::wiki::children $sync_fixture::store /]]
+} -cleanup sync_fixture::cleanup -result {Guide 1 1}
 
 test sync-failure {failed image uploads leave the existing database content unchanged} -setup sync_fixture::setup -body {
     ::web::static::wiki::initdb $sync_fixture::db

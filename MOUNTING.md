@@ -9,6 +9,9 @@ Mount before catch-all routes. A prefix must be an absolute canonical content pa
 `/` mounts at the root. Navigation entries are `{label /local-path}` pairs.
 
 Routes are GET/HEAD for the root, content paths and `/_assets/style.css`.
+Content paths use folder names and filename stems, with `.md` or `.markdown`
+removed and the usual lowercase slug normalization. Headings supply display
+titles only; changing a heading does not change the URL.
 There are no write routes. Unknown content and reserved endpoint names return 404;
 unsupported methods return 405. Responses are dictionaries with `statusCode`,
 `headers` and `body`, suitable for direct HTTP and Lambda adapters.

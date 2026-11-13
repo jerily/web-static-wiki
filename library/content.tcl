@@ -139,7 +139,7 @@ proc ::web::static::wiki::scan {store directory relative parent itemsVar} {
         } elseif {$type eq "file" && [string tolower [file extension $filename]] in {.md .markdown}} {
             set markdown [read_file $filename]
             set title [title $markdown $name]
-            set pageSlug [slug $title]
+            set pageSlug [slug [file rootname $name]]
             index_source items $prefix/$pageSlug [dict create parent_path $parent item_type page \
                 title $title markdown $markdown source_path $source]
         }

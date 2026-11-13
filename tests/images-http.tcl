@@ -2,7 +2,7 @@ lassign $argv library endpoint directory
 set root [file dirname [file dirname [file normalize [info script]]]]
 set auto_path [linsert $auto_path 0 $root]
 load $library Aws_sdk_tcl_s3
-package require web-static-wiki 0.1.5
+package require web-static-wiki 0.1.6
 package require http
 proc assert {expression} {if {![uplevel 1 [list expr $expression]]} {error "assertion failed: $expression"}}
 proc write {filename bytes} {

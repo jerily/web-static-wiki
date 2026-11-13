@@ -28,7 +28,7 @@ ttrek install web-static-wiki
 ```
 
 ```tcl
-package require web-static-wiki 0.1.2
+package require web-static-wiki 0.1.6
 set store [::web::static::wiki::create -directory ./content/wiki -title Wiki]
 set router [::tpathexp::router]
 ::web::static::wiki::mount $router -store $store -prefix /wiki
@@ -44,9 +44,17 @@ A missing directory is an error; an empty directory serves an empty index.
 
 `.md` and `.markdown` files are read recursively; dotfiles are ignored, and symlinks
 are rejected. A file is limited to 1 MiB. The first Markdown heading supplies its
-title, falling back to the filename stem. Folder names and titles become lowercase
-ASCII URL slugs. Empty slugs become `wiki-item`. Duplicate canonical paths fail.
+title, falling back to the filename stem. Folder names and filename stems become
+lowercase ASCII URL slugs; spaces and dashes collapse, and punctuation is removed.
+The `.md` or `.markdown` extension is omitted. Empty slugs become `wiki-item`.
+Duplicate canonical paths fail, but different files may share a heading.
 The index lists immediate children with folders first. Empty folders remain navigable.
+
+Since 0.1.6, `ttrek-venv.md` headed `# Understanding ttrek-venv` is served at
+`/wiki/ttrek-venv`. Editing the heading changes the displayed title and keeps the
+URL. Before upgrading from heading-based URLs, rename existing files to match
+their current URL slugs to preserve incoming links, then run `sync`. Old paths
+that no longer match a file are removed, without redirects.
 
 To keep asset folders out of directory listings:
 
@@ -58,8 +66,8 @@ set store [::web::static::wiki::create -directory ./content/wiki \
 Available since 0.1.2, `-exclude_from_navigation` is a Tcl list of literal,
 case-sensitive source paths relative to `-directory`, using `/` separators.
 An entry hides that file or directory and its descendants from all directory
-listings. Paths are source filenames, not title-derived URLs; glob characters
-are literal. Absolute paths, backslashes, empty segments, `.` and `..` are
+listings. Paths use source filenames, including extensions and original case;
+glob characters are literal. Absolute paths, backslashes, empty segments, `.` and `..` are
 rejected. An empty list (the default) leaves navigation unchanged.
 
 This only affects navigation. Excluded content is still validated and available
@@ -199,8 +207,10 @@ query metadata without article bodies. Existing readers see synced changes on th
 next query. The host closes the connection when its worker stops.
 
 `sync` validates source files, prepares rendered Markdown and image keys, uploads
-missing or changed images, and replaces the domain's rows in one transaction. Image-upload
-failures leave the previous database content intact; completed S3 replacements remain. Expiring image URLs are signed
+missing or changed images, and replaces the domain's rows in one transaction.
+Pages and folders removed from the source directory are removed from that domain's
+database content on the next successful sync. Other domains are unaffected.
+Image-upload failures leave the previous database content intact; completed S3 replacements remain. Expiring image URLs are signed
 when rendering a requested item. `initdb` is idempotent and never called by `sync`,
 store creation, mounting or request handling. Directory stores keep their original
 local behavior. There are no snapshot files to build, publish or load.
