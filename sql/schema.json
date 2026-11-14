@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "tables": [
+    {
+      "name": "web_static_wiki_items",
+      "columns": {
+        "domain": {
+          "type": "varchar",
+          "length": 253,
+          "not_null": true
+        },
+        "path": {
+          "type": "varchar",
+          "length": 1024,
+          "not_null": true
+        },
+        "parent_path": {
+          "type": "text",
+          "not_null": true
+        },
+        "item_type": {
+          "type": "text",
+          "not_null": true
+        },
+        "title": {
+          "type": "text",
+          "not_null": true
+        },
+        "source_path": {
+          "type": "text",
+          "not_null": true
+        },
+        "published_at": {
+          "type": "text",
+          "not_null": true
+        },
+        "markdown": {
+          "type": "text",
+          "not_null": true
+        },
+        "markdown_html": {
+          "type": "text",
+          "not_null": true
+        },
+        "image_references": {
+          "type": "text",
+          "not_null": true
+        },
+        "image_bucket": {
+          "type": "text",
+          "not_null": true
+        },
+        "image_prefix": {
+          "type": "text",
+          "not_null": true
+        }
+      },
+      "primary_key": [
+        "domain",
+        "path"
+      ],
+      "indexes": [
+        {
+          "name": "web_static_wiki_children",
+          "columns": [
+            "domain",
+            "parent_path"
+          ]
+        },
+        {
+          "name": "web_static_wiki_types",
+          "columns": [
+            "domain",
+            "item_type"
+          ]
+        }
+      ]
+    }
+  ]
+}
