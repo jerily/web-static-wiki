@@ -1,6 +1,6 @@
 {
   "name": "web-static-wiki",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "scripts": {},
   "dependencies": {
     "tcl": ">=8.6.0,<10.0.0",
@@ -9,7 +9,7 @@
     "jinja2-tcl": "^0.1.0",
     "tjson": "^1.0.26",
     "aws-sdk-tcl-s3": "^1.0.17",
-    "tpersist": "^0.1.2",
+    "tpersist": "^0.1.4",
     "twebserver": "^1.47.55"
   },
   "devDependencies": {},
