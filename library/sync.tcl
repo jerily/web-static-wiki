@@ -1,18 +1,15 @@
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+
 # Explicit maintenance APIs. Creating a database store and serving requests
 # never creates schema, reads source files, or uploads images.
 namespace eval ::web::static::wiki {namespace import ::tpersist::db_*}
 
+# Apply the package schema during explicit initialization.
 proc ::web::static::wiki::initdb {connection} {
-    set fields {
-        domain {type varchar length 253 not_null 1}
-        path {type varchar length 1024 not_null 1}
-    }
-    foreach name {parent_path item_type title source_path published_at markdown markdown_html image_references image_bucket image_prefix} {
-        dict set fields $name {type text not_null 1}
-    }
-    db_create_table $connection [db_define_table web_static_wiki_items $fields -primary_key {domain path}] -if_not_exists 1
-    db_create_index $connection web_static_wiki_children web_static_wiki_items {domain parent_path} -if_not_exists 1
-    db_create_index $connection web_static_wiki_types web_static_wiki_items {domain item_type} -if_not_exists 1
+    variable root
+    db_apply_schema $connection [file join $root sql schema.json] -additive true
 }
 
 proc ::web::static::wiki::database_store {store} {
