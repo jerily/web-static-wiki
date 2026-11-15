@@ -32,3 +32,40 @@ For build-time uploads, use `upload_missing true` in `-s3` during the build and
 `upload_missing false` at runtime. Both stages must use the same image files,
 bucket and prefix. Runtime mode validates references and signs fresh URLs without
 listing or uploading S3 objects; its role only needs image `s3:GetObject` access.
+
+## Local images
+
+Use the same Markdown image references with a local URL prefix:
+
+```tcl
+set store [::web::static::wiki::create -directory content/wiki \
+    -images-directory content/images -images-url-prefix /images]
+$router add GET /images/:path(.*) [list ::web::static::wiki::serve_image $store] -strict true
+```
+
+`![Photo](photo.jpg)` reads `content/images/photo.jpg` and renders
+`<img src="/images/photo.jpg" ...>`, including on nested pages. The host mounts
+one image handler; wiki and blog can share the same directory and prefix.
+The handler returns binary-safe responses for twebserver or Lambda, with image
+MIME types and automatic HEAD support through tpathexp. It serves only indexed
+images, rejects traversal and symbolic links, and limits images to 20 MiB.
+Restart the directory store after adding images. No AWS client is needed.
+
+Choose either `-images-url-prefix` or `-s3`. Both use the same validated image
+inventory and URL encoding. Database stores can sync local image references;
+the host serves their files separately from a directory store's inventory.
+
+To share the renderer with an editable wiki, blog or forum, create an inventory
+without loading Markdown pages:
+
+```tcl
+set images [::web::static::wiki::image_store \
+    -images-directory content/images -images-url-prefix /images]
+set renderer [list ::web::static::wiki::render_content $images]
+```
+
+`render_content $images $markdown` uses the same safe Markdown parsing, reference
+validation and URL rewriting as static pages. It reports expected image errors
+with `{WEB CONTENT status}` so a host can reject invalid submissions before
+saving. `serve_image` accepts the same inventory. Host callbacks are trusted;
+never substitute an unsafe renderer for user-submitted Markdown.
