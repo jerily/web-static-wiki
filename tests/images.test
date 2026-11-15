@@ -1,6 +1,6 @@
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki 0.1.6
+package require web-static-wiki 0.1.8
 package require twebserver 1.47.55
 # The unit suite uses a deterministic client; the HTTP integration suite uses awss3.
 package provide awss3 1.0.17
@@ -234,5 +234,52 @@ test images-settings {invalid S3 settings are rejected} -setup image_fixture::se
     }
     set result
 } -cleanup image_fixture::cleanup -result {1 1 1 1 1 1 1 1 1}
+
+
+test images-local {local prefix shares image validation and rewriting, with no AWS calls} -setup image_fixture::setup -body {
+    set store [image_fixture::create -s3 {} -images-url-prefix /images/]
+    set html [image_fixture::render $store]
+    set router [::tpathexp::router]
+    try {
+        $router add GET /images/:path(.*) [list ::web::static::wiki::serve_image $store]
+        set response [$router dispatch {method GET path /images/screens/image.png}]
+        set head [$router dispatch {method HEAD path /images/screens/image.png}]
+        list [regexp -all {<img src="/images/} $html] \
+            [string match {*caf%C3%A9%20%26%20image.svg#view*} $html] \
+            [expr {[binary decode base64 [dict get $response body]] eq $image_fixture::bytes}] \
+            [dict get $response headers content-type] [dict get $head body] \
+            $image_fixture::calls $image_fixture::signatures
+    } finally {$router destroy}
+} -cleanup image_fixture::cleanup -result {3 1 1 image/png {} {} 0}
+
+test images-local-paths {unindexed files, traversal, and replaced symlinks cannot be served} -setup image_fixture::setup -body {
+    set store [image_fixture::create -s3 {} -images-url-prefix /images]
+    set results {}
+    foreach path {missing.png ../secret.png %2e%2e/secret.png screens%2fimage.png screens/image.png#view} {
+        lappend results [dict get [::web::static::wiki::serve_image $store {} {} [dict create path $path]] statusCode]
+    }
+    set filename [file join $image_fixture::imageDirectory screens image.png]
+    file delete $filename
+    file link -symbolic $filename $image_fixture::source
+    lappend results [dict get [::web::static::wiki::serve_image $store {} {} {path screens/image.png}] statusCode]
+    set results
+} -cleanup image_fixture::cleanup -result {404 400 400 400 404 404}
+
+test images-local-config {prefix must be local and unambiguous with S3} -setup image_fixture::setup -body {
+    set results {}
+    foreach prefix {/ //cdn.example /images/../secret /images?x https://cdn.example} {
+        lappend results [catch {image_fixture::create -s3 {} -images-url-prefix $prefix}]
+    }
+    lappend results [catch {image_fixture::create -images-url-prefix /images}]
+    set results
+} -cleanup image_fixture::cleanup -result {1 1 1 1 1 1}
+
+
+test images-shared {image-only inventories supply the same renderer to editable packages} -setup image_fixture::setup -body {
+    set images [::web::static::wiki::image_store -images-directory $image_fixture::imageDirectory -images-url-prefix /images]
+    set html [::web::static::wiki::render_content $images {![Photo](screens/image.png)}]
+    catch {::web::static::wiki::render_content $images {![Missing](missing.png)}} message options
+    list [string match {*src="/images/screens/image.png"*} $html] [dict get $options -errorcode] $image_fixture::calls
+} -cleanup image_fixture::cleanup -result {1 {WEB CONTENT 400} {}}
 
 cleanupTests

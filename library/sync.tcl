@@ -14,6 +14,7 @@ proc ::web::static::wiki::initdb {connection} {
 
 proc ::web::static::wiki::database_store {store} {
     if {[dict get $store -directory] ne {}} {error "use -connection or -directory, not both"}
+    dict set store -images-url-prefix [local_image_prefix $store]
     set domain [dict get $store -domain]
     if {$domain eq {} || [string length $domain] > 253} {error "-domain must contain 1 to 253 characters"}
     # Validate the borrowed connection and signing options, without running SQL.
@@ -35,7 +36,11 @@ proc ::web::static::wiki::database_load {store path} {
     set rows [dict get [db_execute [dict get $store -connection] $query] rows]
     if {![llength $rows]} {fail 404 "content not found"}
     set item [lindex $rows 0]
-    if {[dict get $item image_references] ne {}} {
+    if {[dict get $item image_references] ne {} && [dict get $store -images-url-prefix] ne {}} {
+        if {[dict get $item image_bucket] ne {} || [dict get $item image_prefix] ne {}} {
+            error "Stored images use S3; sync with local image options first"
+        }
+    } elseif {[dict get $item image_references] ne {}} {
         set s3 [image_settings $store]
         foreach field {bucket prefix} {
             if {[dict get $item image_$field] ne [dict get $s3 $field]} {

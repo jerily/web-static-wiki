@@ -1,6 +1,6 @@
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki 0.1.6
+package require web-static-wiki 0.1.8
 package provide awss3 1.0.17
 namespace eval sync_fixture {}
 namespace eval ::aws::s3 {}

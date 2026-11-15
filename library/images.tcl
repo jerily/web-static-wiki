@@ -77,11 +77,27 @@ proc ::web::static::wiki::image_source {source} {
     return [list $source $fragment]
 }
 
+proc ::web::static::wiki::local_image_prefix {store} {
+    set prefix [string trimright [dict get $store -images-url-prefix] /]
+    if {[dict get $store -images-url-prefix] ne {} && ![regexp {^(/[A-Za-z0-9_-]+)+$} $prefix]} {
+        error "-images-url-prefix must be a non-root local URL path"
+    }
+    if {$prefix ne {} && [dict get $store -s3] ne {}} {
+        error "choose -images-url-prefix or -s3"
+    }
+    return $prefix
+}
+
 proc ::web::static::wiki::prepare_images {store} {
-    if {[dict get $store -s3] eq {}} {return $store}
-    package require awss3 1.0.17
-    set settings [image_settings $store]
-    dict set store -s3 $settings
+    dict set store -images-url-prefix [local_image_prefix $store]
+    if {[dict get $store -s3] eq {} && [dict get $store -images-url-prefix] eq {}} {return $store}
+    set prefix {}
+    if {[dict get $store -s3] ne {}} {
+        package require awss3 1.0.17
+        set settings [image_settings $store]
+        dict set store -s3 $settings
+        set prefix [dict get $settings prefix]
+    }
     set directory [dict get $store -images-directory]
     if {$directory eq {}} {set directory [dict get $store -directory]}
     if {![file isdirectory $directory] || [file type $directory] eq "link"} {
@@ -96,29 +112,20 @@ proc ::web::static::wiki::prepare_images {store} {
     dict set store -images-directory [file normalize $directory]
     set images {}
     scan_images [dict get $store -images-directory] {} images
-    set prefix [dict get $settings prefix]
     dict for {source image} $images {
         set key $source
         if {$prefix ne {}} {set key $prefix/$key}
         dict set images $source key $key
     }
-    # Validate every image reference before making any S3 requests. Work on the
-    # safe renderer's output so inline/reference images work and code is ignored.
-    dict for {path item} [dict get $store items] {
-        if {[dict get $item item_type] ne "page"} {continue}
-        set html [::cmark_gfm::render_gfm_html [dict get $item markdown]]
-        set references {}
-        foreach {tag source} [regexp -all -inline {<img src="([^"]*)"} $html] {
-            lassign [image_source $source] name fragment
-            if {![dict exists $images $name]} {fail 400 "image not found in -images-directory: $name"}
-            dict set references $source [list [dict get $images $name key] $fragment]
-        }
-        dict set store items $path markdown_html $html
-        dict set store items $path image_references $references
-    }
     dict set store images $images
+    # Validate references before making any storage requests.
+    dict for {path item} [dict get $store items] {
+        if {[dict get $item item_type] eq "page"} {
+            dict set store items $path [prepare_image_item $store $item]
+        }
+    }
     # File importers prepare image keys once; database readers use saved keys.
-    if {![dict get $settings upload_missing]} {return $store}
+    if {[dict get $store -s3] eq {} || ![dict get $settings upload_missing]} {return $store}
     sync_images $store
     return $store
 }
@@ -178,7 +185,9 @@ proc ::web::static::wiki::render_markdown {store item} {
     dict for {source reference} [dict get $item image_references] {
         lassign $reference key fragment
         if {![dict exists $urls $key]} {
-            if {[dict get $settings cdn_url] ne {}} {
+            if {[dict get $store -images-url-prefix] ne {}} {
+                set url [dict get $store -images-url-prefix]/[image_url_path $key]
+            } elseif {[dict get $settings cdn_url] ne {}} {
                 set url [dict get $settings cdn_url]/[image_url_path $key]
             } else {
                 set url [::aws::s3::generate_presigned_url -method GET \
@@ -199,4 +208,65 @@ proc ::web::static::wiki::render_markdown {store item} {
         lappend replacements "<img src=\"$source\"" "<img src=\"$url\""
     }
     return [string map $replacements [dict get $item markdown_html]]
+}
+
+# Mount this handler at <prefix>/:path(.*). Only indexed images are reachable;
+# request paths never become unchecked filesystem paths.
+proc ::web::static::wiki::serve_image {store request context params} {
+    try {
+        if {[dict get $store -images-url-prefix] eq {} || ![dict exists $store images]} {
+            fail 404 "image not found"
+        }
+        lassign [image_source [dict get $params path]] source fragment
+        if {$fragment ne {} || ![dict exists $store images $source]} {fail 404 "image not found"}
+        set image [dict get $store images $source]
+        set filename [dict get $image filename]
+        # Recheck the snapshot's path: an edited tree must not expose a symlink.
+        set current $filename
+        while {[file dirname $current] ne $current} {
+            if {![file exists $current] || [file type $current] eq "link"} {fail 404 "image not found"}
+            set current [file dirname $current]
+        }
+        if {![file isfile $filename]} {fail 404 "image not found"}
+        set channel [open $filename rb]
+        try {set bytes [read $channel 20971521]} finally {close $channel}
+        if {[string length $bytes] > 20971520} {fail 413 "image exceeds 20 MiB"}
+        set result [response 200 [binary encode base64 -maxlen 0 $bytes] [dict get $image content_type]]
+        dict set result isBase64Encoded 1
+        return $result
+    } trap {WEB STATIC_WIKI} {message options} {
+        return [response [lindex [dict get $options -errorcode] 2] "$message\n" {text/plain; charset=utf-8}]
+    }
+}
+
+# An image-only inventory can be shared with editable content renderers.
+proc ::web::static::wiki::image_store {args} {
+    set store [options {-images-directory {} -images-url-prefix {} -s3 {}} {*}$args]
+    if {[dict get $store -images-directory] eq {}} {error "-images-directory is required"}
+    dict set store -directory [dict get $store -images-directory]
+    dict set store items {}
+    return [prepare_images $store]
+}
+
+proc ::web::static::wiki::prepare_image_item {store item} {
+    set html [::cmark_gfm::render_gfm_html [dict get $item markdown]]
+    set references {}
+    foreach {tag source} [regexp -all -inline {<img src="([^"]*)"} $html] {
+        lassign [image_source $source] name fragment
+        if {![dict exists $store images $name]} {fail 400 "image not found in -images-directory: $name"}
+        dict set references $source [list [dict get $store images $name key] $fragment]
+    }
+    dict set item markdown_html $html
+    dict set item image_references $references
+    return $item
+}
+
+# Trusted rendering callback for hosts composing editable Markdown packages.
+# Parsing and rewriting is identical to the static page pipeline.
+proc ::web::static::wiki::render_content {store markdown} {
+    try {
+        render_markdown $store [prepare_image_item $store [dict create markdown $markdown]]
+    } trap {WEB STATIC_WIKI} {message options} {
+        return -code error -errorcode [list WEB CONTENT [lindex [dict get $options -errorcode] 2]] $message
+    }
 }
