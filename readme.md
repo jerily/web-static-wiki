@@ -18,7 +18,7 @@
 - Validate content before deployment; duplicate URLs fail the complete snapshot.
 
 ## Generic Guidelines
-- Tcl 8.6 and 9.x are supported with ABI-matching native dependencies.
+- Tcl 9.1 is required, with ABI-matching native dependencies.
 - Installation uses CMake with `LANGUAGES NONE`; this package needs no compiler or Node.
 
 ## Install and use
@@ -103,7 +103,7 @@ Image hosting is optional. Pass `-s3` and, optionally, `-images-directory` to
 `create`. Without `-s3`, the existing Markdown rendering behavior is unchanged.
 
 ```tcl
-package require awss3 1.0.17
+package require pure-tcl-aws-s3 0.1.0
 set s3 [::aws::s3::create {region eu-central-1}]
 set store [::web::static::wiki::create -directory ./content/wiki \
     -images-directory ./content/images \
@@ -172,14 +172,13 @@ bucket ACL is needed. For local tests only, `http_endpoint` may name a loopback
 HTTP origin (e.g. `http://127.0.0.1:9000`); it must match the SDK client endpoint.
 The package then allows that origin in its image CSP. Production URLs require HTTPS.
 
-Image support requires `aws-sdk-tcl-s3` 1.0.17+ (`awss3`) and `twebserver`'s native `::twebserver::sha256`.
+Image support requires `pure-tcl-aws-s3` 0.1.0+ and `twebserver`'s native `::twebserver::sha256`.
 
 The unit suite uses a fake S3 client. For real SDK requests against a disposable
 loopback HTTP fixture (no AWS credentials or account needed), run:
 
 ```sh
-python3 tests/images_server.py --tclsh tclsh9.1 \
-  --library /path/to/aws-sdk-tcl-s3/libaws-sdk-tcl-s3.so
+python3 tests/images_server.py --tclsh tclsh9.1
 ```
 
 For CloudFront delivery, set `cdn_url https://your-distribution.cloudfront.net`

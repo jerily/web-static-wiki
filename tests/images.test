@@ -1,9 +1,15 @@
+# 
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+# 
+
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki 0.1.8
+package require web-static-wiki 0.1.9
 package require twebserver 1.47.55
-# The unit suite uses a deterministic client; the HTTP integration suite uses awss3.
-package provide awss3 1.0.17
+# The unit suite uses a deterministic client; the HTTP integration suite uses pure-tcl-aws-s3.
+package provide pure-tcl-aws-s3 0.1.0
 namespace eval ::aws::s3 {}
 namespace eval image_fixture {}
 proc image_fixture::write {path bytes} {

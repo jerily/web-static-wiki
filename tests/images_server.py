@@ -61,7 +61,6 @@ class S3(BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--library", required=True, type=Path)
     parser.add_argument("--tclsh", default="tclsh9.1")
     args = parser.parse_args()
     env = dict(os.environ, AWS_EC2_METADATA_DISABLED="true", AWS_REQUEST_CHECKSUM_CALCULATION="when_required")
@@ -72,7 +71,7 @@ def main():
         try:
             with tempfile.TemporaryDirectory(prefix="static-images-") as directory:
                 result = subprocess.run([args.tclsh, str(Path(__file__).with_name("images-http.tcl")),
-                                         str(args.library.resolve()), f"http://127.0.0.1:{server.server_port}",
+                                         f"http://127.0.0.1:{server.server_port}",
                                          directory], env=env, timeout=60)
             if result.returncode:
                 return result.returncode
