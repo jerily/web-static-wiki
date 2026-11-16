@@ -1,10 +1,18 @@
-lassign $argv library endpoint directory
+# 
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+# 
+
+lassign $argv endpoint directory
 set root [file dirname [file dirname [file normalize [info script]]]]
 set auto_path [linsert $auto_path 0 $root]
-load $library Aws_sdk_tcl_s3
+package require pure-tcl-aws-s3 0.1.0
 package require web-static-wiki 0.1.6
 package require http
+# Check an HTTP integration expectation.
 proc assert {expression} {if {![uplevel 1 [list expr $expression]]} {error "assertion failed: $expression"}}
+# Write fixture bytes without encoding conversion.
 proc write {filename bytes} {
     file mkdir [file dirname $filename]
     set channel [open $filename wb]
@@ -38,7 +46,7 @@ try {
     set index 0
     foreach {tag escaped} [regexp -all -inline {<img src="([^"]+)"} $html] {
         set url [string map {&amp; &} $escaped]
-        set expected "$endpoint/images-bucket/test/images/[lindex {pixel.png diagram.svg caf%C3%A9%20&%20image.svg} $index]?"
+        set expected "$endpoint/images-bucket/test/images/[lindex {pixel.png diagram.svg caf%C3%A9%20%26%20image.svg} $index]?"
         if {[string first $expected $url] != 0} {error "Expected URL starting with $expected; got $url"}
         set token [::http::geturl $url -binary 1]
         try {
@@ -62,5 +70,5 @@ try {
     try {assert {[::http::data $token] eq "${png}changed"}} finally {::http::cleanup $token}
     set denied [dict replace [dict get $options -s3] prefix denied]
     assert {[catch {::web::static::wiki::create {*}$options -s3 $denied}]}
-    puts "Real SDK image rendering passed (wiki)"
+    puts "S3 image rendering passed (wiki)"
 } finally {$client destroy}

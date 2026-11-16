@@ -1,16 +1,16 @@
 {
   "name": "web-static-wiki",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "scripts": {},
   "dependencies": {
-    "tcl": ">=8.6.0,<10.0.0",
+    "tcl": ">=9.1.0,<10.0.0",
     "tpathexp": "^1.1.0",
     "cmark-gfm-tcl": "^0.1.0",
     "jinja2-tcl": "^0.1.0",
     "tjson": "^1.0.26",
-    "aws-sdk-tcl-s3": "^1.0.17",
+    "pure-tcl-aws-s3": "^0.1.0",
     "tpersist": "^0.1.4",
-    "twebserver": "^1.47.55"
+    "twebserver": "^1.47.58"
   },
   "devDependencies": {},
   "description": "Read-only Markdown wiki with directory or SQL storage and explicit synchronization."

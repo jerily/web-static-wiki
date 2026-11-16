@@ -1,3 +1,9 @@
+# 
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+# 
+
 # Images are resolved only against this snapshot, never from request-time paths.
 proc ::web::static::wiki::image_settings {store} {
     set settings [options {client {} bucket {} prefix content/images url_expiry_seconds 3600 http_endpoint {} upload_missing true cdn_url {}} \
@@ -93,7 +99,7 @@ proc ::web::static::wiki::prepare_images {store} {
     if {[dict get $store -s3] eq {} && [dict get $store -images-url-prefix] eq {}} {return $store}
     set prefix {}
     if {[dict get $store -s3] ne {}} {
-        package require awss3 1.0.17
+        package require pure-tcl-aws-s3 0.1.0
         set settings [image_settings $store]
         dict set store -s3 $settings
         set prefix [dict get $settings prefix]
