@@ -99,7 +99,7 @@ proc ::web::static::wiki::prepare_images {store} {
     if {[dict get $store -s3] eq {} && [dict get $store -images-url-prefix] eq {}} {return $store}
     set prefix {}
     if {[dict get $store -s3] ne {}} {
-        package require pure-tcl-aws-s3 0.1.0
+        package require pure-tcl-aws-s3 1.0.0
         set settings [image_settings $store]
         dict set store -s3 $settings
         set prefix [dict get $settings prefix]
