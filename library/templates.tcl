@@ -40,7 +40,6 @@ proc ::web::static::wiki::page_templates {config {extraTemplates {}}} {
 
 proc ::web::static::wiki::render_page {config name fields {extraTemplates {}}} {
     variable templates
-    init_templates
     set navigation {}
     foreach link [dict get $config -navigation] {
         lassign $link label href
@@ -50,6 +49,11 @@ proc ::web::static::wiki::render_page {config name fields {extraTemplates {}}} {
         home [url $config /] assets [dict get $config -prefix]/_assets]]
     dict set context navigation [rows_field $navigation]
     set context [dict merge $context $fields]
+    set json [::tjson::typed_to_json [list M $context]]
+    if {[dict exists $config -config template_renderer] && [dict get $config -config template_renderer] ne {}} {
+        return [{*}[dict get $config -config template_renderer] $name $json $extraTemplates]
+    }
+    package require jinja2 0.2.0
     # Extra templates come from the trusted host, never a request or content row.
     set available [page_templates $config $extraTemplates]
     ::jinja2::render [dict get $available $name] \
@@ -58,6 +62,7 @@ proc ::web::static::wiki::render_page {config name fields {extraTemplates {}}} {
 
 # This provider is also used by packaging; it needs no content store or SQL.
 proc ::web::static::wiki::prepare_templates {{settings {}}} {
+    package require jinja2 0.2.0
     variable templates
     init_templates
     set settings [dict merge {master_template {} templates {} validate_templates true} $settings]
