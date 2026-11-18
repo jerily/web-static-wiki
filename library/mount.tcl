@@ -1,12 +1,12 @@
 proc ::web::static::wiki::mount {router args} {
     init_templates
-    set config [options [dict create -store {} -prefix /wiki -navigation {} -config {}] {*}$args]
-    set settings [options {master_template {} templates {}} {*}[dict get $config -config]]
+    set config [options [dict create -store {} -prefix /wiki -navigation {} -config {} -secret_config {}] {*}$args]
+    # Reserved for a consistent host mount contract; never capture unused secrets.
+    dict size [dict get $config -secret_config]
+    dict unset config -secret_config
+    set settings [options {master_template {} templates {} validate_templates true} {*}[dict get $config -config]]
     dict set config -config $settings
-    set available [page_templates $config]
-    dict for {name text} $available {
-        ::jinja2::validate $text -templates $available -path $name
-    }
+    prepare_templates $settings
     set store [dict get $config -store]
     if {$store eq {} || [dict get $store kind] ne "wiki"} {error "-store must be a wiki store"}
     set prefix [string trimright [dict get $config -prefix] /]
