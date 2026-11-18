@@ -235,3 +235,16 @@ or embed template strings in the configuration. The host owns rendering caches
 and must validate the complete package/layout composition during packaging/CI.
 The existing `master_template`, `templates`, and `prepare_templates` APIs remain
 available for compatibility and artifact validation.
+
+`::web::static::wiki::sync_prepared $store $items` imports trusted items from
+a directory store's `items` dictionary into a database store. It validates the
+records before replacing that domain, uses the destination store's image settings,
+and participates in the caller's transaction. It does not read files or upload
+images; the host must publish referenced assets before importing the snapshot.
+
+`::web::static::wiki::page_summaries $store $paths` fetches selected page metadata
+in one query, returning a dictionary keyed by canonical path. Missing pages,
+folders and navigation-excluded sources are omitted. Summaries omit article
+bodies. Before using image references, pass a summary to
+`::web::static::wiki::summary_images $store $summary` to validate its stored
+bucket/prefix and normalize the image metadata. Both APIs support directory stores.

@@ -36,6 +36,10 @@ proc ::web::static::wiki::database_load {store path} {
     set rows [dict get [db_execute [dict get $store -connection] $query] rows]
     if {![llength $rows]} {fail 404 "content not found"}
     set item [lindex $rows 0]
+    database_item $store $item
+}
+
+proc ::web::static::wiki::database_item {store item} {
     if {[dict get $item image_references] ne {} && [dict get $store -images-url-prefix] ne {}} {
         if {[dict get $item image_bucket] ne {} || [dict get $item image_prefix] ne {}} {
             error "Stored images use S3; sync with local image options first"
@@ -68,22 +72,44 @@ proc ::web::static::wiki::sync {store directory} {
     # Publish images before committing references to them. Failed uploads leave
     # the database untouched. S3 replacements are independent of SQL rollback.
     sync_images $source
+    sync_prepared $store [dict get $source items]
+}
+
+# Import trusted build-prepared content without reading files or uploading images.
+# The package owns its schema, image settings and transaction/savepoint.
+proc ::web::static::wiki::sync_prepared {store items} {
+    if {[dict get $store -connection] eq {}} {error "sync_prepared requires a database store"}
+    set prepared {}
+    dict for {path item} $items {
+        canonical_path $path
+        if {[dict get $item path] ne $path} {error "Prepared item path differs from its key"}
+        canonical_path [dict get $item parent_path]
+        if {[dict get $item item_type] ni {page folder}} {error "Invalid prepared item type"}
+        set row {}
+        foreach key {path parent_path item_type title markdown source_path} {
+            dict set row $key [dict get $item $key]
+        }
+        foreach key {published_at markdown_html image_references} {
+            dict set row $key [expr {[dict exists $item $key] ? [dict get $item $key] : {}}]
+        }
+        dict size [dict get $row image_references]
+        if {[dict get $item item_type] eq "page" && ![dict exists $item markdown_html]} {
+            dict set row markdown_html [::cmark_gfm::render_gfm_html [dict get $item markdown]]
+        }
+        foreach field {bucket prefix} {
+            dict set row image_$field [expr {[dict get $store -s3] eq {} ? {} : [dict get $store -s3 $field]}]
+        }
+        dict set row domain [dict get $store -domain]
+        dict set prepared $path $row
+    }
     set connection [dict get $store -connection]
     db_transaction $connection {
         db_execute $connection [db_where [db_delete web_static_wiki_items] [database_predicate $store]]
-        dict for {path item} [dict get $source items] {
-            set row [dict merge {published_at {} markdown_html {} image_references {} image_bucket {} image_prefix {}} $item]
-            if {[dict get $item item_type] eq "page" && ![dict exists $item markdown_html]} {
-                dict set row markdown_html [::cmark_gfm::render_gfm_html [dict get $item markdown]]
-            }
-            if {[dict get $source -s3] ne {}} {
-                foreach field {bucket prefix} {dict set row image_$field [dict get $source -s3 $field]}
-            }
-            dict set row domain [dict get $store -domain]
+        dict for {path row} $prepared {
             set values {}
             dict for {key value} $row {dict set values $key [db_value $value -type text]}
             db_execute $connection [db_values [db_insert web_static_wiki_items] $values -expressions]
         }
     }
-    return [dict size [dict get $source items]]
+    return [dict size $prepared]
 }
