@@ -213,3 +213,25 @@ Image-upload failures leave the previous database content intact; completed S3 r
 when rendering a requested item. `initdb` is idempotent and never called by `sync`,
 store creation, mounting or request handling. Directory stores keep their original
 local behavior. There are no snapshot files to build, publish or load.
+
+## Deferred loading
+
+`package require web-static-wiki::routes 1.0` loads only route declarations.
+`::web::static::wiki::route_specs prefix binding ?settings? ?policy?` returns
+`{methods pattern handlerPrefix}` records. `binding` is opaque: a host can bind
+its prepared configuration or a reference resolved by its dispatcher. Account
+routes use display settings and policy to select optional routes at startup.
+
+`::web::static::wiki::prepare_mount` accepts the same options as `mount`, without the
+router argument, and prepares resources without registering routes. The normal
+`mount` procedure uses the same route definitions. Keep the returned configuration
+for the mount's lifetime; a lazy dispatcher prepares it once on first use.
+Both APIs retain the `-secret_config` option.
+
+The `template_renderer` entry in `-config` accepts a trusted command prefix. It
+receives `name json` (plus an optional override dictionary for static content)
+and returns rendered HTML. When supplied, mounting does not read template files
+or embed template strings in the configuration. The host owns rendering caches
+and must validate the complete package/layout composition during packaging/CI.
+The existing `master_template`, `templates`, and `prepare_templates` APIs remain
+available for compatibility and artifact validation.
