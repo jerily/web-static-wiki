@@ -72,17 +72,52 @@ proc ::web::static::wiki::children {store path} {
     foreach item $candidates {
         set key [dict get $item path]
         if {$key eq $path || [dict get $item parent_path] ne $path} {continue}
-        set source [dict get $item source_path]
-        set hidden 0
-        foreach excluded [dict get $store -exclude_from_navigation] {
-            if {$source eq $excluded || [string first "$excluded/" $source] == 0} {
-                set hidden 1
-                break
-            }
-        }
-        if {!$hidden} {lappend rows $item}
+        if {[navigation_visible $store $item]} {lappend rows $item}
     }
     return [lsort -command ::web::static::wiki::compare_items $rows]
+}
+
+proc ::web::static::wiki::navigation_visible {store item} {
+    set source [dict get $item source_path]
+    foreach excluded [dict get $store -exclude_from_navigation] {
+        if {$source eq $excluded || [string first "$excluded/" $source] == 0} {return false}
+    }
+    return true
+}
+
+# Fetch selected published pages for cards/previews, including image metadata
+# but never article bodies. Missing, hidden and non-page items are omitted.
+proc ::web::static::wiki::page_summaries {store paths} {
+    foreach path $paths {canonical_path $path}
+    set paths [lsort -unique $paths]
+    if {![llength $paths]} {return {}}
+    if {[dict get $store -connection] ne {}} {
+        set columns {path parent_path item_type title source_path published_at image_references image_bucket image_prefix}
+        set query [db_where [db_select web_static_wiki_items -columns $columns] [db_and \
+            [database_predicate $store] \
+            [db_in [db_col path] [lmap path $paths {db_value $path -type text}]] \
+            [db_eq [db_col item_type] [db_value page -type text]]]]
+        set rows [dict get [db_execute [dict get $store -connection] $query] rows]
+    } else {
+        set rows {}
+        foreach path $paths {
+            if {[dict exists $store items $path]} {lappend rows [dict get $store items $path]}
+        }
+    }
+    set result {}
+    foreach item $rows {
+        if {[dict get $item item_type] ne "page" || ![navigation_visible $store $item]} continue
+        # An invalid image configuration must not hide unrelated summaries.
+        # Report it only if the caller tries to use the summary's images.
+        dict set result [dict get $item path] [dict remove $item markdown markdown_html]
+    }
+    return $result
+}
+
+# Normalize/validate a selected summary before using its image references.
+proc ::web::static::wiki::summary_images {store item} {
+    if {[dict get $store -connection] ne {}} {return [database_item $store $item]}
+    return $item
 }
 
 proc ::web::static::wiki::slug {text} {

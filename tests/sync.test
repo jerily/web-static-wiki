@@ -156,4 +156,41 @@ test sync-storage {stored references cannot silently switch image buckets} -setu
     ::web::static::wiki::load $store /guide
 } -cleanup sync_fixture::cleanup -returnCodes error -result {Stored image bucket differs from runtime configuration}
 
+test sync-summaries {batch summaries omit bodies, hidden pages and other domains; image validation stays explicit} -setup sync_fixture::setup -body {
+    ::web::static::wiki::initdb $sync_fixture::db
+    sync_fixture::write [file join $sync_fixture::root pages hidden secret.md] {# Hidden}
+    ::web::static::wiki::sync $sync_fixture::store [file join $sync_fixture::root pages]
+    set store [dict replace $sync_fixture::store -exclude_from_navigation hidden]
+    set pages [::web::static::wiki::page_summaries $store {/guide /guide /missing /hidden /hidden/secret}]
+    set item [dict get $pages /guide]
+    set images [::web::static::wiki::summary_images $store $item]
+    set other [dict replace $store -domain other]
+    set bad [dict replace $store -s3 [dict replace $sync_fixture::s3 bucket different]]
+    set invalid [catch {::web::static::wiki::summary_images $bad $item}]
+    set directory [::web::static::wiki::create -directory [file join $sync_fixture::root pages] \
+        -images-directory [file join $sync_fixture::root images] -s3 $sync_fixture::s3 -exclude_from_navigation hidden]
+    list [dict keys $pages] [dict exists $item markdown] [dict exists $item markdown_html] \
+        [dict exists $images image_references] $invalid [::web::static::wiki::page_summaries $other /guide] \
+        [dict keys [::web::static::wiki::page_summaries $directory {/guide /hidden/secret}]] \
+        [::web::static::wiki::page_summaries $store {}]
+} -cleanup sync_fixture::cleanup -result {/guide 0 0 1 1 {} /guide {}}
+
+test sync-prepared {prepared content imports without files or S3 calls and participates in caller rollback} -setup sync_fixture::setup -body {
+    ::web::static::wiki::initdb $sync_fixture::db
+    set source [::web::static::wiki::create -directory [file join $sync_fixture::root pages] \
+        -images-directory [file join $sync_fixture::root images] -s3 $sync_fixture::s3]
+    set items [dict get $source items]
+    file delete -force [file join $sync_fixture::root pages] [file join $sync_fixture::root images]
+    set sync_fixture::calls {}
+    set count [::web::static::wiki::sync_prepared $sync_fixture::store $items]
+    dict set items /guide title Changed
+    catch {::tpersist::db_transaction $sync_fixture::db {
+        ::web::static::wiki::sync_prepared $sync_fixture::store $items
+        error rollback
+    }}
+    dict set items /guide path /wrong
+    set invalid [catch {::web::static::wiki::sync_prepared $sync_fixture::store $items}]
+    list $count [dict get [::web::static::wiki::load $sync_fixture::store /guide] title] $invalid $sync_fixture::calls
+} -cleanup sync_fixture::cleanup -result {2 Guide 1 {}}
+
 cleanupTests
