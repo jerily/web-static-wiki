@@ -53,7 +53,7 @@ proc ::web::static::wiki::render_page {config name fields {extraTemplates {}}} {
     if {[dict exists $config -config template_renderer] && [dict get $config -config template_renderer] ne {}} {
         return [{*}[dict get $config -config template_renderer] $name $json $extraTemplates]
     }
-    package require jinja2 0.2.0
+    package require jinja2
     # Extra templates come from the trusted host, never a request or content row.
     set available [page_templates $config $extraTemplates]
     ::jinja2::render [dict get $available $name] \
@@ -62,7 +62,7 @@ proc ::web::static::wiki::render_page {config name fields {extraTemplates {}}} {
 
 # This provider is also used by packaging; it needs no content store or SQL.
 proc ::web::static::wiki::prepare_templates {{settings {}}} {
-    package require jinja2 0.2.0
+    package require jinja2
     variable templates
     init_templates
     set settings [dict merge {master_template {} templates {} validate_templates true} $settings]

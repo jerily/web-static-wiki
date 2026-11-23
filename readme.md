@@ -28,7 +28,7 @@ ttrek install web-static-wiki
 ```
 
 ```tcl
-package require web-static-wiki 1.0.0
+package require web-static-wiki
 set store [::web::static::wiki::create -directory ./content/wiki -title Wiki]
 set router [::tpathexp::router]
 ::web::static::wiki::mount $router -store $store -prefix /wiki
@@ -103,7 +103,7 @@ Image hosting is optional. Pass `-s3` and, optionally, `-images-directory` to
 `create`. Without `-s3`, the existing Markdown rendering behavior is unchanged.
 
 ```tcl
-package require pure-tcl-aws-s3 1.0.0
+package require pure-tcl-aws-s3
 set s3 [::aws::s3::create {region eu-central-1}]
 set store [::web::static::wiki::create -directory ./content/wiki \
     -images-directory ./content/images \

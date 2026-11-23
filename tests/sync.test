@@ -4,9 +4,9 @@
 # SPDX-License-Identifier: MIT.
 # 
 
-package require tcltest 2
+package require tcltest
 namespace import ::tcltest::*
-package require web-static-wiki 1.0.0
+package require web-static-wiki
 package provide pure-tcl-aws-s3 1.0.0
 namespace eval sync_fixture {}
 namespace eval ::aws::s3 {}

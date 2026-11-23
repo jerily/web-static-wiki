@@ -7,8 +7,8 @@
 lassign $argv endpoint directory
 set root [file dirname [file dirname [file normalize [info script]]]]
 set auto_path [linsert $auto_path 0 $root]
-package require pure-tcl-aws-s3 1.0.0
-package require web-static-wiki 1.0.0
+package require pure-tcl-aws-s3
+package require web-static-wiki
 package require http
 # Check an HTTP integration expectation.
 proc assert {expression} {if {![uplevel 1 [list expr $expression]]} {error "assertion failed: $expression"}}

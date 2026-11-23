@@ -4,9 +4,9 @@
 # SPDX-License-Identifier: MIT.
 # 
 
-package require tcltest 2
+package require tcltest
 namespace import ::tcltest::*
-package require web-static-wiki 1.0.0
+package require web-static-wiki
 namespace eval fixture {}
 proc fixture::write {path text} {
     set ch [open $path w]; fconfigure $ch -encoding utf-8

@@ -4,10 +4,10 @@
 # SPDX-License-Identifier: MIT.
 # 
 
-package require tcltest 2
+package require tcltest
 namespace import ::tcltest::*
-package require web-static-wiki 1.0.0
-package require twebserver 1.47.55
+package require web-static-wiki
+package require twebserver
 # The unit suite uses a deterministic client; the HTTP integration suite uses pure-tcl-aws-s3.
 package provide pure-tcl-aws-s3 1.0.0
 namespace eval ::aws::s3 {}
