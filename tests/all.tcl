@@ -1,4 +1,4 @@
-package require tcltest 2
+package require tcltest
 set auto_path [linsert $auto_path 0 [file dirname [file dirname [file normalize [info script]]]]]
 # Fixtures must never share a caller's source/content directory.
 set channel [file tempfile temporary]
