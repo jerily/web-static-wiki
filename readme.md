@@ -28,7 +28,7 @@ ttrek install web-static-wiki
 ```
 
 ```tcl
-package require web-static-wiki 0.1.6
+package require web-static-wiki 1.0.0
 set store [::web::static::wiki::create -directory ./content/wiki -title Wiki]
 set router [::tpathexp::router]
 ::web::static::wiki::mount $router -store $store -prefix /wiki
@@ -216,11 +216,9 @@ local behavior. There are no snapshot files to build, publish or load.
 
 ## Deferred loading
 
-`package require web-static-wiki::routes 1.0` loads only route declarations.
-`::web::static::wiki::route_specs prefix binding ?settings? ?policy?` returns
-`{methods pattern handlerPrefix}` records. `binding` is opaque: a host can bind
-its prepared configuration or a reference resolved by its dispatcher. Account
-routes use display settings and policy to select optional routes at startup.
+`::web::core::manifest web-static-wiki` reads [api.json](api.json) without loading
+the application handlers. Pass the manifest, prefix and mount configuration to
+`::web::core::route_plan` to resolve bindings, middleware, and routes.
 
 `::web::static::wiki::prepare_mount` accepts the same options as `mount`, without the
 router argument, and prepares resources without registering routes. The normal

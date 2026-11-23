@@ -1,4 +1,3 @@
-package require web-static-wiki::routes 1.0
 # 
 # Copyright Jerily LTD. All Rights Reserved.
 # SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
@@ -6,6 +5,7 @@ package require web-static-wiki::routes 1.0
 # 
 
 # Load the static wiki package and its storage dependencies.
+package require -exact web-static-wiki::manifest 1.0.0
 package require Tcl 9.1
 package require cmark_gfm 0.1.0
 package require tpathexp 1.1.0
@@ -21,4 +21,4 @@ source [file join $::web::static::wiki::root library templates.tcl]
 source [file join $::web::static::wiki::root library http.tcl]
 source [file join $::web::static::wiki::root library mount.tcl]
 source [file join $::web::static::wiki::root library sync.tcl]
-package provide web-static-wiki 0.1.13
+package provide web-static-wiki 1.0.0

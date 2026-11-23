@@ -6,7 +6,7 @@
 
 package require tcltest 2
 namespace import ::tcltest::*
-package require web-static-wiki 0.1.10
+package require web-static-wiki 1.0.0
 package require twebserver 1.47.55
 # The unit suite uses a deterministic client; the HTTP integration suite uses pure-tcl-aws-s3.
 package provide pure-tcl-aws-s3 1.0.0
