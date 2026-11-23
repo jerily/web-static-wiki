@@ -6,7 +6,7 @@
 
 # Images are resolved only against this snapshot, never from request-time paths.
 proc ::web::static::wiki::image_settings {store} {
-    set settings [options {client {} bucket {} prefix content/images url_expiry_seconds 3600 http_endpoint {} upload_missing true cdn_url {}} \
+    set settings [::web::core::options {client {} bucket {} prefix content/images url_expiry_seconds 3600 http_endpoint {} upload_missing true cdn_url {}} \
         {*}[dict get $store -s3]]
     if {[dict get $settings client] eq {} || [dict get $settings bucket] eq {}} {
         error "-s3 requires client and bucket"
@@ -247,7 +247,7 @@ proc ::web::static::wiki::serve_image {store request context params} {
 
 # An image-only inventory can be shared with editable content renderers.
 proc ::web::static::wiki::image_store {args} {
-    set store [options {-images-directory {} -images-url-prefix {} -s3 {}} {*}$args]
+    set store [::web::core::options {-images-directory {} -images-url-prefix {} -s3 {}} {*}$args]
     if {[dict get $store -images-directory] eq {}} {error "-images-directory is required"}
     dict set store -directory [dict get $store -images-directory]
     dict set store items {}

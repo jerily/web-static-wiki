@@ -2,18 +2,9 @@ proc ::web::static::wiki::fail {status message} {
     return -code error -errorcode [list WEB STATIC_WIKI $status] $message
 }
 
-proc ::web::static::wiki::options {defaults args} {
-    if {[llength $args] % 2} {error "options must be name/value pairs"}
-    foreach {key value} $args {
-        if {![dict exists $defaults $key]} {error "unknown option: $key"}
-        dict set defaults $key $value
-    }
-    return $defaults
-}
-
 # Directory stores retain the local behavior. Database stores query on demand.
 proc ::web::static::wiki::create {args} {
-    set store [options {-connection {} -domain default -directory {} -title Wiki -exclude_from_navigation {} -images-directory {} -images-url-prefix {} -s3 {}} {*}$args]
+    set store [::web::core::options {-connection {} -domain default -directory {} -title Wiki -exclude_from_navigation {} -images-directory {} -images-url-prefix {} -s3 {}} {*}$args]
     if {[dict get $store -connection] ne {}} {return [database_store $store]}
     set directory [dict get $store -directory]
     if {$directory eq {} || ![file isdirectory $directory] || [file type $directory] eq "link"} {

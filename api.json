@@ -1,0 +1,82 @@
+{
+  "format": "ttrek-web-api/1",
+  "package": "web-static-wiki",
+  "summary": "Mount read-only wiki content.",
+  "mount": {
+    "command": "::web::static::wiki::mount",
+    "prefix": {
+      "option": "-prefix",
+      "default": "/wiki",
+      "allowRoot": true
+    },
+    "docs": "MOUNTING.md"
+  },
+  "inputs": {},
+  "router": {
+    "engine": "tpathexp",
+    "strict": true
+  },
+  "routerMiddleware": [],
+  "routes": [
+    {
+      "id": "asset",
+      "summary": "Serve a bundled asset.",
+      "methods": [
+        "GET"
+      ],
+      "path": "/_assets/:asset",
+      "handler": [
+        "::web::static::wiki::dispatch",
+        {
+          "bind": "config"
+        },
+        "asset"
+      ]
+    },
+    {
+      "id": "index",
+      "summary": "Render the index.",
+      "methods": [
+        "GET"
+      ],
+      "path": "",
+      "handler": [
+        "::web::static::wiki::dispatch",
+        {
+          "bind": "config"
+        },
+        "view"
+      ]
+    },
+    {
+      "id": "index.slash",
+      "summary": "Render the index at the trailing-slash URL of a non-root mount.",
+      "methods": [
+        "GET"
+      ],
+      "path": "/",
+      "handler": [
+        "::web::static::wiki::dispatch",
+        {
+          "bind": "config"
+        },
+        "view"
+      ]
+    },
+    {
+      "id": "page",
+      "summary": "Render the requested path.",
+      "methods": [
+        "GET"
+      ],
+      "path": "/:path(.*)",
+      "handler": [
+        "::web::static::wiki::dispatch",
+        {
+          "bind": "config"
+        },
+        "view"
+      ]
+    }
+  ]
+}
